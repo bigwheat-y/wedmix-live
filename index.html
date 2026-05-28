@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>WedMix Live - 婚礼现场专业调音控制台</title>
+  <meta name="description" content="WedMix Live 是一款面向婚礼现场调音师设计的专业级实时音频控制台。具备零延迟仪式流控制、气氛打击垫、一键压限避让与紧急静音。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Dark carbon tactical background grids -->
+  <div class="carbon-grid-overlay"></div>
+  <div class="tactical-glow bg-tactical-cyan"></div>
+  <div class="tactical-glow bg-tactical-emerald"></div>
+  <div class="tactical-glow bg-tactical-red"></div>
+
+  <div class="console-wrapper">
+    <!-- Top Bar: Tactical Status & Profile Manager -->
+    <header class="console-topbar glass-tactical">
+      <div class="brand-zone">
+        <div class="radar-logo">
+          <div class="radar-sweep"></div>
+          <span class="logo-bar"></span><span class="logo-bar"></span><span class="logo-bar"></span>
+        </div>
+        <h1 id="app-logo">WedMix <span class="badge-tactical">Live v1.0</span></h1>
+      </div>
+      
+      <!-- Wedding Couple Profile Selector -->
+      <div class="profile-zone">
+        <div class="input-glow-group">
+          <span class="input-icon">💍</span>
+          <input type="text" id="wedding-scheme-name" placeholder="请输入本场新人名称 (如: 张先生&李女士)" value="张先生 & 李女士婚礼配乐方案">
+        </div>
+        <div class="profile-actions">
+          <button class="btn-tactical btn-small btn-tactical-emerald" id="btn-preload-demo">⚡ 载入演示音乐</button>
+          <button class="btn-tactical btn-small btn-tactical-cyan" id="btn-save-profile">💾 保存配置</button>
+          <button class="btn-tactical btn-small btn-tactical-cyan" id="btn-load-profile-trigger">📂 导入配置</button>
+          <button class="btn-tactical btn-small btn-tactical-red" id="btn-reset-all">🔄 一键重置</button>
+          <input type="file" id="profile-file-input" accept=".json,.zip" class="hidden-input">
+        </div>
+      </div>
+
+      <!-- Realtime LED System Clock -->
+      <div class="system-led-clock">
+        <span class="label">SYSTEM CLOCK</span>
+        <span id="led-time-display">22:15:45</span>
+      </div>
+    </header>
+
+    <!-- Main Live Mixer Interface -->
+    <main class="console-live-grid">
+      
+      <!-- Panel 1: Scene Cue Flow Manager (Itinerary Flow) -->
+      <section class="panel-tactical glass-tactical itinerary-panel">
+        <div class="panel-tactical-header">
+          <h2>📋 婚礼仪式主干流程流控</h2>
+          <span class="status-indicator-tag status-ready" id="master-status-tag">STANDBY</span>
+        </div>
+        <p class="panel-desc">点击仪式环节的 [⚡触发] 进行一键无缝交叉淡化过渡。支持拖拽音频文件到对应环节配乐槽中。</p>
+        
+        <!-- Checklist of Wedding Scenes -->
+        <div class="scenes-flow-container" id="scenes-flow-list">
+          <!-- Scene cards rendered dynamically by JavaScript -->
+        </div>
+      </section>
+
+      <!-- Right Panel Group: Top Deck Visuals & Bottom Soundboard -->
+      <div class="right-column-mixer">
+        
+        <!-- Panel 2: Interactive Deck Display (Waveforms & Controls) -->
+        <section class="panel-tactical glass-tactical active-deck-panel">
+          <div class="panel-tactical-header">
+            <h2>🎚️ 实时播放引擎与波形窗</h2>
+            <div class="deck-track-indicator" id="deck-display-track-title">NO ACTIVE TRACK</div>
+          </div>
+          
+          <div class="tactical-wave-workspace">
+            <canvas id="deck-waveform-canvas"></canvas>
+            <div class="tactical-playhead" id="deck-playhead-marker"></div>
+            <!-- Visual loading bar -->
+            <div class="deck-loader hidden" id="deck-waveform-loader">
+              <div class="spinner-tactical"></div>
+              <p>DECODING CUE SOURCE...</p>
+            </div>
+          </div>
+
+          <!-- Timeline information labels -->
+          <div class="timeline-stats-row">
+            <div class="led-stat-box">
+              <span class="label">CURRENT POSITION</span>
+              <span class="value" id="deck-val-current-time">0:00.0</span>
+            </div>
+            <div class="led-stat-box">
+              <span class="label">TOTAL LENGTH</span>
+              <span class="value" id="deck-val-total-duration">0:00.0</span>
+            </div>
+            <div class="led-stat-box highlighted">
+              <span class="label">CROSSFADE PRESET</span>
+              <span class="value" id="deck-val-crossfade-preset">2.5s</span>
+            </div>
+          </div>
+
+          <!-- Transport bar -->
+          <div class="transport-toolbar">
+            <div class="transport-buttons">
+              <button class="btn-tactical btn-circle btn-tactical-red" id="btn-live-stop" title="紧急中断">⏹️</button>
+              <button class="btn-tactical btn-tactical-emerald btn-large-live" id="btn-live-play-pause">
+                <span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>
+              </button>
+              <button class="btn-tactical btn-circle btn-tactical-cyan" id="btn-live-loop" title="循环当前背景">🔁</button>
+            </div>
+            
+            <!-- Global console locking check -->
+            <div class="lock-panel-toggle">
+              <input type="checkbox" id="chk-console-lock">
+              <label for="chk-console-lock" class="glow-checkbox-label">🔒 锁定调音台面板 (防误触)</label>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 3: Instant Atmosphere Soundboard Pads -->
+        <section class="panel-tactical glass-tactical soundboard-panel">
+          <div class="panel-tactical-header">
+            <h2>⚡ 即时气氛声效打击垫 (SOUNDBOARD)</h2>
+            <span class="soundboard-poly-count">POLYPHONIC</span>
+          </div>
+          <p class="panel-desc">点击即时触发音效，可叠加在当前BGM之上播放。齿轮图标可切换“系统高保真合成音”与“自定义音频文件”。</p>
+          
+          <div class="soundboard-pads-grid">
+            <!-- Pad 1 -->
+            <div class="soundboard-pad-card" id="pad-card-1">
+              <button class="pad-trigger-button" id="pad-btn-1" data-pad-id="1">
+                <span class="pad-icon">👏</span>
+                <span class="pad-title">掌声雷动</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-1" data-pad-id="1">⚙️</button>
+            </div>
+            <!-- Pad 2 -->
+            <div class="soundboard-pad-card" id="pad-card-2">
+              <button class="pad-trigger-button" id="pad-btn-2" data-pad-id="2">
+                <span class="pad-icon">🎉</span>
+                <span class="pad-title">欢呼尖叫</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-2" data-pad-id="2">⚙️</button>
+            </div>
+            <!-- Pad 3 -->
+            <div class="soundboard-pad-card" id="pad-card-3">
+              <button class="pad-trigger-button" id="pad-btn-3" data-pad-id="3">
+                <span class="pad-icon">🔔</span>
+                <span class="pad-title">教堂钟声</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-3" data-pad-id="3">⚙️</button>
+            </div>
+            <!-- Pad 4 -->
+            <div class="soundboard-pad-card" id="pad-card-4">
+              <button class="pad-trigger-button" id="pad-btn-4" data-pad-id="4">
+                <span class="pad-icon">🌅</span>
+                <span class="pad-title">浪漫音垫</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-4" data-pad-id="4">⚙️</button>
+            </div>
+            <!-- Pad 5 -->
+            <div class="soundboard-pad-card" id="pad-card-5">
+              <button class="pad-trigger-button" id="pad-btn-5" data-pad-id="5">
+                <span class="pad-icon">😭</span>
+                <span class="pad-title">催泪音垫</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-5" data-pad-id="5">⚙️</button>
+            </div>
+            <!-- Pad 6 -->
+            <div class="soundboard-pad-card" id="pad-card-6">
+              <button class="pad-trigger-button" id="pad-btn-6" data-pad-id="6">
+                <span class="pad-icon">👑</span>
+                <span class="pad-title">祝酒礼乐</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-6" data-pad-id="6">⚙️</button>
+            </div>
+            <!-- Pad 7 -->
+            <div class="soundboard-pad-card" id="pad-card-7">
+              <button class="pad-trigger-button" id="pad-btn-7" data-pad-id="7">
+                <span class="pad-icon">🥁</span>
+                <span class="pad-title">紧张鼓点</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-7" data-pad-id="7">⚙️</button>
+            </div>
+            <!-- Pad 8 -->
+            <div class="soundboard-pad-card" id="pad-card-8">
+              <button class="pad-trigger-button" id="pad-btn-8" data-pad-id="8">
+                <span class="pad-icon">⚡</span>
+                <span class="pad-title">悬念扫频</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-8" data-pad-id="8">⚙️</button>
+            </div>
+            <!-- Pad 9 -->
+            <div class="soundboard-pad-card" id="pad-card-9">
+              <button class="pad-trigger-button" id="pad-btn-9" data-pad-id="9">
+                <span class="pad-icon">👰</span>
+                <span class="pad-title">进行曲选段</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-9" data-pad-id="9">⚙️</button>
+            </div>
+            <!-- Pad 10 -->
+            <div class="soundboard-pad-card" id="pad-card-10">
+              <button class="pad-trigger-button" id="pad-btn-10" data-pad-id="10">
+                <span class="pad-icon">🎷</span>
+                <span class="pad-title">萨克斯浪漫</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-10" data-pad-id="10">⚙️</button>
+            </div>
+            <!-- Pad 11 -->
+            <div class="soundboard-pad-card" id="pad-card-11">
+              <button class="pad-trigger-button" id="pad-btn-11" data-pad-id="11">
+                <span class="pad-icon">🤣</span>
+                <span class="pad-title">爆笑气氛</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-11" data-pad-id="11">⚙️</button>
+            </div>
+            <!-- Pad 12 -->
+            <div class="soundboard-pad-card" id="pad-card-12">
+              <button class="pad-trigger-button" id="pad-btn-12" data-pad-id="12">
+                <span class="pad-icon">🤫</span>
+                <span class="pad-title">静音舱氛围</span>
+              </button>
+              <button class="pad-config-gear" id="pad-gear-12" data-pad-id="12">⚙️</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+    <!-- Bottom Dashboard: Master Mixer Controls & Emergency Interventions -->
+    <section class="console-master-mixer glass-tactical">
+      
+      <!-- Big Emergency Stop Switch -->
+      <div class="emergency-action-zone">
+        <button class="btn-emergency-shutdown" id="btn-emergency-fade">
+          <span class="glow-indicator-red"></span>
+          🚨 EMERGENCY FADE OUT
+          <span class="btn-subtext">紧急一键淡出 (1.5秒归零)</span>
+        </button>
+      </div>
+
+      <!-- MC Mic Ducking Toggle -->
+      <div class="ducking-control-zone">
+        <button class="btn-ducking-toggle" id="btn-ducking-switch">
+          <span class="led-light" id="ducking-led"></span>
+          🎙️ 司仪人声避让 (BGM Ducking)
+          <span class="btn-subtext">背景音乐音量自动压限 75%</span>
+        </button>
+      </div>
+
+      <!-- Crossfader Manual Controller -->
+      <div class="manual-crossfader-zone">
+        <div class="crossfade-title-row">
+          <span>DECK A (Active Scene)</span>
+          <span class="current-crossfade-position" id="crossfader-position-val">0.0 (CENTER)</span>
+          <span>DECK B (Cue Target)</span>
+        </div>
+        <div class="slider-fader-container">
+          <input type="range" id="master-crossfader-slider" min="-1" max="1" step="0.05" value="0">
+        </div>
+      </div>
+
+      <!-- Master Volume Control -->
+      <div class="master-volume-zone">
+        <span class="fader-label">MASTER VOL</span>
+        <div class="vertical-fader-container">
+          <input type="range" id="master-volume-slider" min="0" max="1" step="0.05" value="0.8">
+        </div>
+        <span class="fader-value-tag" id="master-volume-val">80%</span>
+      </div>
+
+      <!-- Realtime LED bouncing VU Meters -->
+      <div class="vu-meters-zone">
+        <span class="vu-title">OUTPUT VU METER</span>
+        <div class="led-vu-display">
+          <div class="vu-channel">
+            <div class="vu-label">L</div>
+            <div class="led-bars-container" id="vu-left-meter">
+              <!-- Led segments generated dynamically -->
+            </div>
+          </div>
+          <div class="vu-channel">
+            <div class="vu-label">R</div>
+            <div class="led-bars-container" id="vu-right-meter">
+              <!-- Led segments generated dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Modal Backdrop: Custom soundboard pad configure dialog -->
+    <div class="modal-tactical-overlay hidden" id="pad-config-modal">
+      <div class="modal-tactical-card glass-tactical">
+        <div class="modal-header">
+          <h3>⚙️ 配置气氛打击垫 [<span id="config-pad-title">声效名称</span>]</h3>
+          <button class="btn-modal-close" id="btn-config-close">✕</button>
+        </div>
+        
+        <div class="modal-body-tactical">
+          <div class="form-group-tactical">
+            <label>打击垫标题 (Pad Name):</label>
+            <input type="text" id="config-pad-input-name" placeholder="请输入声效名">
+          </div>
+
+          <div class="form-group-tactical">
+            <label>声效声源类型 (Audio Source Type):</label>
+            <div class="radio-card-group">
+              <label class="radio-card">
+                <input type="radio" name="pad-source-type" value="synth" checked id="radio-type-synth">
+                <span class="radio-title">⚡ 系统高保真合成音 (Offline Synth)</span>
+                <span class="radio-desc">利用 Web Audio 实时合成，保证 100% 离线可用，无需加载。</span>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="pad-source-type" value="custom" id="radio-type-custom">
+                <span class="radio-title">📂 自定义音频文件 (Custom MP3/WAV)</span>
+                <span class="radio-desc">上传您自己的效果音，将自动保存在浏览器本地 IndexedDB 缓存中。</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Synth dropdown -->
+          <div class="form-group-tactical" id="group-synth-select">
+            <label for="config-synth-effect-select">选择系统合成音效 (Synth Preset):</label>
+            <select id="config-synth-effect-select">
+              <option value="bell">🔔 庄严大教堂钟声 (FM Cathedral Bell)</option>
+              <option value="pad">🌅 温暖浪漫背景音垫 (Warm Triangle Pad)</option>
+              <option value="fanfare">👑 庆典祝酒皇家礼乐 (Arpeggiated Brass Fanfare)</option>
+              <option value="suspense">🥁 紧张定场扫频鼓点 (Drums & White Noise Sweep)</option>
+            </select>
+          </div>
+
+          <!-- Custom file upload -->
+          <div class="form-group-tactical hidden" id="group-custom-file">
+            <label>上传音效文件 (Upload File):</label>
+            <div class="custom-file-upload-box" id="pad-custom-file-dropzone">
+              <input type="file" id="pad-custom-file-input" accept="audio/*" class="hidden-input">
+              <span id="pad-custom-file-name">📂 点击或拖拽上传音频效果音</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn-tactical btn-tactical-red" id="btn-config-reset">🔄 恢复出厂设置</button>
+          <button class="btn-tactical btn-tactical-cyan" id="btn-config-save">💾 保存配置</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Loader modal -->
+    <div class="modal-tactical-overlay hidden" id="live-loader-overlay">
+      <div class="modal-tactical-card glass-tactical text-center" style="width: 320px;">
+        <div class="spinner-tactical" style="width: 48px; height: 48px;"></div>
+        <h3 style="margin-top: 1.2rem; font-family: 'Share Tech Mono', monospace;" id="live-loader-title">SYNCHRONIZING PROFILE</h3>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;" id="live-loader-desc">Please wait while database loads cached wedding elements...</p>
+      </div>
+    </div>
+
+    <footer class="console-footer">
+      <p>WEDMIX LIVE AUDIO MATRIX // SYSTEM READY // PERSISTENT CACHE ACTIVE (INDEXEDDB)</p>
+    </footer>
+  </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
