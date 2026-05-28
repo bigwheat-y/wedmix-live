@@ -73,17 +73,36 @@ function interleave(inputL, inputR) {
 }
 
 function downmixToStereo(audioBuffer) {
-  const inputL = audioBuffer.getChannelData(0);
-  const inputR = audioBuffer.getChannelData(1);
-  const length = inputL.length + inputR.length;
-  const result = new Float32Array(length);
-  
-  let index = 0;
-  let inputIndex = 0;
-  while (index < length) {
-    result[index++] = inputL[inputIndex];
-    result[index++] = inputR[inputIndex];
-    inputIndex++;
+  // Average all channels into L and R by pairing them.
+  // Channels 0, 2, 4... → Left; Channels 1, 3, 5... → Right.
+  // If there is only one extra channel beyond stereo, it is split equally.
+  const numCh = audioBuffer.numberOfChannels;
+  const len = audioBuffer.getChannelData(0).length;
+  const outL = new Float32Array(len);
+  const outR = new Float32Array(len);
+
+  for (let ch = 0; ch < numCh; ch++) {
+    const src = audioBuffer.getChannelData(ch);
+    if (ch % 2 === 0) {
+      for (let i = 0; i < len; i++) outL[i] += src[i];
+    } else {
+      for (let i = 0; i < len; i++) outR[i] += src[i];
+    }
+  }
+
+  // Normalize to prevent clipping
+  const leftCount = Math.ceil(numCh / 2);
+  const rightCount = Math.floor(numCh / 2) || 1;
+  for (let i = 0; i < len; i++) {
+    outL[i] /= leftCount;
+    outR[i] /= rightCount;
+  }
+
+  // Interleave L/R into a single Float32Array
+  const result = new Float32Array(len * 2);
+  for (let i = 0; i < len; i++) {
+    result[i * 2]     = outL[i];
+    result[i * 2 + 1] = outR[i];
   }
   return result;
 }

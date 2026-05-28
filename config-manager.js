@@ -99,21 +99,27 @@ export async function deleteCachedAudioFile(trackId) {
  */
 export function generateConfigObject(schemeName, scenes, soundboard, crossfade) {
   return {
-    version: '2.0',
+    version: '3.0',
     exportedAt: new Date().toISOString(),
     schemeName: schemeName || '未知新郎 & 新娘婚礼配乐方案',
     crossfade: crossfade || 2.0,
     scenes: scenes.map(s => ({
       id: s.id,
       name: s.name,
-      assignedTrackId: s.assignedTrackId || null,
-      assignedTrackName: s.assignedTrackName || null,
-      audioZipPath: s.assignedTrackName ? `audio/scene_${s.id}_${s.assignedTrackName}` : null,
+      playMode: s.playMode || 'sequential',
       fadeIn: s.fadeIn || 0,
       fadeOut: s.fadeOut || 0,
-      startTime: s.startTime || 0,
-      endTime: s.endTime || null,
-      loop: s.loop || false
+      loop: s.loop || false,
+      tracks: (s.tracks || []).map(t => ({
+        id: t.id,
+        assignedTrackId: t.assignedTrackId || null,
+        assignedTrackName: t.assignedTrackName || null,
+        audioZipPath: t.assignedTrackName ? `audio/scene_${s.id}_${t.id}_${t.assignedTrackName}` : null,
+        startTime: t.startTime || 0,
+        endTime: t.endTime || null,
+        fadeIn: t.fadeIn || 0,
+        fadeOut: t.fadeOut || 0
+      }))
     })),
     soundboard: soundboard.map(p => ({
       id: p.id,

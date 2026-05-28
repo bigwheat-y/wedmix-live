@@ -13,6 +13,7 @@ let analyserL = null;
 let analyserR = null;
 
 let isConsoleLocked = false;
+let isEmergencyActive = false;
 let isDuckingActive = false;
 let masterVolume = 0.8;
 let bgmVolume = 1.0;
@@ -28,20 +29,25 @@ let activeSoundboardSources = [];
 // VU meter elements cached
 let leftLEDs = [];
 let rightLEDs = [];
+let vuLoopRunning = false;
 
-// Auto-increment ID for new scenes
+// Scene reorder drag state
+let sceneDragState = null;
+
+// Auto-increment ID for new scenes / tracks
 let nextSceneId = 9;
+let nextTrackId = 1;
 
 // Default wedding scenes setup
 let scenes = [
-  { id: 1, name: "宾客进场暖场", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.0, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-  { id: 2, name: "司仪开场致辞", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.0, fadeOut: 1.5, startTime: 0, endTime: null, loop: false },
-  { id: 3, name: "新郎帅气入场", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.5, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-  { id: 4, name: "新娘圣洁入场", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.0, fadeOut: 2.5, startTime: 0, endTime: null, loop: false },
-  { id: 5, name: "誓言交换与致辞", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.5, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-  { id: 6, name: "信物交换与拥吻", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.0, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-  { id: 7, name: "礼成退场欢庆", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.0, fadeOut: 2.5, startTime: 0, endTime: null, loop: false },
-  { id: 8, name: "宴会背景与敬酒", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.5, fadeOut: 2.5, startTime: 0, endTime: null, loop: false }
+  { id: 1, name: "宾客进场暖场", playMode: "sequential", fadeIn: 2.0, fadeOut: 2.0, loop: false, tracks: [] },
+  { id: 2, name: "司仪开场致辞", playMode: "sequential", fadeIn: 1.0, fadeOut: 1.5, loop: false, tracks: [] },
+  { id: 3, name: "新郎帅气入场", playMode: "sequential", fadeIn: 1.5, fadeOut: 2.0, loop: false, tracks: [] },
+  { id: 4, name: "新娘圣洁入场", playMode: "sequential", fadeIn: 2.0, fadeOut: 2.5, loop: false, tracks: [] },
+  { id: 5, name: "誓言交换与致辞", playMode: "sequential", fadeIn: 2.5, fadeOut: 2.0, loop: false, tracks: [] },
+  { id: 6, name: "信物交换与拥吻", playMode: "sequential", fadeIn: 1.0, fadeOut: 2.0, loop: false, tracks: [] },
+  { id: 7, name: "礼成退场欢庆", playMode: "sequential", fadeIn: 1.0, fadeOut: 2.5, loop: false, tracks: [] },
+  { id: 8, name: "宴会背景与敬酒", playMode: "sequential", fadeIn: 2.5, fadeOut: 2.5, loop: false, tracks: [] }
 ];
 
 // Default soundboard pads setup
@@ -140,7 +146,7 @@ function initConsole() {
   bindGlobalEventHandlers();
 
   // LED System Clock Loop
-  setInterval(updateLEDClock, 1000);
+  startLEDClock();
   updateLEDClock();
 
   // Try to load cached assets from IndexedDB database on startup
@@ -232,11 +238,21 @@ function buildVUMeters() {
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  // innerHTML escapes < > & but NOT quotes — replace them manually
+  // so the result is safe inside HTML attribute values (e.g. value="...")
+  return div.innerHTML
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderScenes() {
   const container = scenesFlowList;
+
+  if (sceneDragState) {
+    sceneDragState = null;
+    container.querySelectorAll('.scene-drop-indicator').forEach(el => el.remove());
+  }
+
   container.innerHTML = '';
 
   scenes.forEach((scene, index) => {
@@ -245,37 +261,61 @@ function renderScenes() {
     card.dataset.sceneId = scene.id;
     card.id = `scene-card-${scene.id}`;
 
-    const trackDisplay = scene.assignedTrackName
-      ? `🎵 ${scene.assignedTrackName}${scene.buffer ? ' (' + formatTime(scene.buffer.duration) + ')' : ' ⚠️ 音频未加载，请重新上传'}`
-      : '📂 点击或拖拽音频文件配乐';
-
-    const dropzoneClass = 'scene-file-dropzone' + (scene.assignedTrackName ? ' assigned' : '');
+    // Build track list HTML
+    let trackListHTML = '';
+    if (scene.tracks.length === 0) {
+      trackListHTML = '<div class="scene-track-empty">暂无音频，请添加</div>';
+    } else {
+      scene.tracks.forEach((track, tIdx) => {
+        const isPlaying = activeSceneId === scene.id && activeBgmSources[scene.id] &&
+          scene.tracks[activeBgmSources[scene.id].playOrder[activeBgmSources[scene.id].currentOrderIndex]]?.id === track.id;
+        const durationStr = track.buffer ? formatTime(track.buffer.duration) : '未加载';
+        trackListHTML += `
+          <div class="scene-track-row ${isPlaying ? 'playing' : ''}" data-track-id="${track.id}" data-scene-id="${scene.id}">
+            <div class="track-drag-handle" draggable="true" data-track-id="${track.id}" data-scene-id="${scene.id}" title="拖拽排序">⋮⋮</div>
+            <div class="track-info" title="${escapeHtml(track.assignedTrackName || '')}">🎵 ${escapeHtml(track.assignedTrackName || '未知')} (${durationStr})</div>
+            <div class="track-params">
+              <label>淡入:<input type="number" class="track-param-input" data-field="fadeIn" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" max="10" step="0.1" value="${track.fadeIn}">s</label>
+              <label>淡出:<input type="number" class="track-param-input" data-field="fadeOut" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" max="10" step="0.1" value="${track.fadeOut}">s</label>
+              <label>起始:<input type="number" class="track-param-input" data-field="startTime" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" step="0.1" value="${track.startTime || 0}">s</label>
+              <label>结束:<input type="number" class="track-param-input" data-field="endTime" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" step="0.1" value="${track.endTime ?? ''}" placeholder="末尾">s</label>
+            </div>
+            <button class="track-delete" data-track-id="${track.id}" data-scene-id="${scene.id}" title="删除此音频">✕</button>
+          </div>`;
+      });
+    }
 
     card.innerHTML = `
+      <div class="scene-drag-handle" data-scene-id="${scene.id}" draggable="true" title="拖拽排序">⋮⋮</div>
       <div class="scene-num-indicator">${String(index + 1).padStart(2, '0')}</div>
       <div class="scene-body">
         <div class="scene-main-info">
           <input type="text" class="scene-name-input" value="${escapeHtml(scene.name)}" data-scene-id="${scene.id}">
           <span class="scene-status-label" id="scene-status-${scene.id}">${activeSceneId === scene.id ? 'ON AIR' : 'STANDBY'}</span>
         </div>
-        <div class="${dropzoneClass}" id="scene-dropzone-${scene.id}">
-          <input type="file" class="scene-file-input hidden-input" data-scene-id="${scene.id}" accept="audio/*">
-          <span class="dropzone-text" id="scene-track-name-${scene.id}">${trackDisplay}</span>
-        </div>
-        <div class="scene-controls-row">
-          <div class="scene-fading-group">
-            <div class="fade-control"><label>淡入:</label><input type="number" class="fade-time-input" data-field="fadeIn" data-scene-id="${scene.id}" min="0" max="10" step="0.5" value="${scene.fadeIn}"><span>s</span></div>
-            <div class="fade-control"><label>淡出:</label><input type="number" class="fade-time-input" data-field="fadeOut" data-scene-id="${scene.id}" min="0" max="10" step="0.5" value="${scene.fadeOut}"><span>s</span></div>
+        <div class="scene-playlist">
+          <div class="scene-playlist-header">
+            <label>模式:<select class="scene-playmode-select" data-scene-id="${scene.id}">
+              <option value="sequential" ${scene.playMode === 'sequential' ? 'selected' : ''}>顺序播放</option>
+              <option value="random" ${scene.playMode === 'random' ? 'selected' : ''}>随机播放</option>
+            </select></label>
+            <label>场景淡入:<input type="number" class="scene-fade-input" data-field="fadeIn" data-scene-id="${scene.id}" min="0" max="10" step="0.5" value="${scene.fadeIn}">s</label>
+            <label>场景淡出:<input type="number" class="scene-fade-input" data-field="fadeOut" data-scene-id="${scene.id}" min="0" max="10" step="0.5" value="${scene.fadeOut}">s</label>
+            <label class="scene-loop-toggle"><input type="checkbox" class="scene-loop-checkbox" data-scene-id="${scene.id}" ${scene.loop ? 'checked' : ''}>🔁循环</label>
           </div>
-          <div class="scene-time-group">
-            <div class="fade-control"><label>起始:</label><input type="number" class="fade-time-input time-input" data-field="startTime" data-scene-id="${scene.id}" min="0" step="0.1" value="${scene.startTime || 0}"><span>s</span></div>
-            <div class="fade-control"><label>结束:</label><input type="number" class="fade-time-input time-input" data-field="endTime" data-scene-id="${scene.id}" min="0" step="0.1" value="${scene.endTime || ''}" placeholder="末尾"><span>s</span></div>
+          <div class="scene-track-list">${trackListHTML}</div>
+          <div class="scene-track-add-zone" data-scene-id="${scene.id}">
+            <input type="file" class="track-file-input hidden-input" data-scene-id="${scene.id}" accept="audio/*">
+            📂 拖拽音频到此处 或 点击添加
           </div>
-          <label class="scene-loop-toggle"><input type="checkbox" class="scene-loop-checkbox" data-scene-id="${scene.id}" ${scene.loop ? 'checked' : ''}><span class="loop-label">🔁</span></label>
         </div>
       </div>
       <div class="scene-actions-column">
         <button class="btn-cue-trigger btn-tactical-cyan" data-scene-id="${scene.id}">⚡ 触发</button>
+        <div class="scene-move-group">
+          <button class="btn-move-scene btn-move-up" data-scene-id="${scene.id}" title="上移" ${index === 0 ? 'disabled' : ''}>▲</button>
+          <button class="btn-move-scene btn-move-down" data-scene-id="${scene.id}" title="下移" ${index === scenes.length - 1 ? 'disabled' : ''}>▼</button>
+        </div>
         <button class="btn-delete-scene" data-scene-id="${scene.id}" title="删除此环节">✕</button>
       </div>
     `;
@@ -290,7 +330,6 @@ function renderScenes() {
   addBtn.addEventListener('click', addScene);
   container.appendChild(addBtn);
 
-  // Bind per-scene events
   bindSceneEvents();
 }
 
@@ -299,50 +338,48 @@ function bindSceneEvents() {
     const card = document.getElementById(`scene-card-${scene.id}`);
     if (!card) return;
 
-    const dropzone = card.querySelector('.scene-file-dropzone');
-    const fileInput = card.querySelector('.scene-file-input');
+    const dragHandle = card.querySelector('.scene-drag-handle');
     const nameInput = card.querySelector('.scene-name-input');
     const cueBtn = card.querySelector('.btn-cue-trigger');
     const deleteBtn = card.querySelector('.btn-delete-scene');
+    const moveUpBtn = card.querySelector('.btn-move-up');
+    const moveDownBtn = card.querySelector('.btn-move-down');
+    const playModeSelect = card.querySelector('.scene-playmode-select');
     const loopCheckbox = card.querySelector('.scene-loop-checkbox');
+    const addZone = card.querySelector('.scene-track-add-zone');
+    const trackFileInput = card.querySelector('.track-file-input');
 
-    // File input click
-    dropzone.addEventListener('click', (e) => {
-      if (e.target.closest('.scene-file-input')) return;
-      fileInput.click();
+    // Scene drag handle
+    dragHandle.addEventListener('dragstart', (e) => {
+      if (scene.id === activeSceneId) { e.preventDefault(); return; }
+      sceneDragState = { sourceId: scene.id };
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(scene.id));
     });
-    fileInput.addEventListener('change', (e) => handleSceneFileSelect(e, scene.id));
 
-    // Drag-and-drop
-    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('active-hover'); });
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('active-hover'));
-    dropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropzone.classList.remove('active-hover');
-      if (e.dataTransfer.files.length > 0) assignAudioToScene(e.dataTransfer.files[0], scene.id);
-    });
+    if (moveUpBtn) moveUpBtn.addEventListener('click', () => moveSceneUp(scene.id));
+    if (moveDownBtn) moveDownBtn.addEventListener('click', () => moveSceneDown(scene.id));
 
     // Name edit
     nameInput.addEventListener('blur', () => {
       const oldName = scene.name;
       scene.name = nameInput.value.trim() || scene.name;
-      if (oldName !== scene.name) {
-        saveCurrentConfigToLocalStorage();
-      }
+      if (oldName !== scene.name) saveCurrentConfigToLocalStorage();
     });
     nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur(); });
 
-    // Fade & time inputs
-    card.querySelectorAll('.fade-time-input').forEach(input => {
+    // Play mode
+    playModeSelect.addEventListener('change', () => {
+      scene.playMode = playModeSelect.value;
+      saveCurrentConfigToLocalStorage();
+    });
+
+    // Scene-level fade inputs
+    card.querySelectorAll('.scene-fade-input').forEach(input => {
       input.addEventListener('change', () => {
         const field = input.dataset.field;
-        const val = parseFloat(input.value);
-        if (field === 'endTime' && (input.value === '' || isNaN(val))) {
-          scene.endTime = null;
-        } else {
-          scene[field] = val || 0;
-        }
-        updateDeckCrossfadeInfo();
+        scene[field] = parseFloat(input.value) || 0;
         saveCurrentConfigToLocalStorage();
       });
     });
@@ -350,15 +387,93 @@ function bindSceneEvents() {
     // Loop toggle
     loopCheckbox.addEventListener('change', () => {
       scene.loop = loopCheckbox.checked;
-      if (activeSceneId === scene.id && activeBgmSources[scene.id]) {
-        const src = activeBgmSources[scene.id].sourceNode;
-        src.loop = scene.loop;
-        if (scene.loop) {
-          src.loopStart = scene.startTime || 0;
-          src.loopEnd = scene.endTime || (scene.buffer ? scene.buffer.duration : 0);
-        }
-      }
       saveCurrentConfigToLocalStorage();
+    });
+
+    // Track add zone
+    addZone.addEventListener('click', () => trackFileInput.click());
+    trackFileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) addTrackToScene(scene.id, e.target.files[0]);
+      e.target.value = '';
+    });
+    addZone.addEventListener('dragover', (e) => { e.preventDefault(); addZone.classList.add('active-hover'); });
+    addZone.addEventListener('dragleave', () => addZone.classList.remove('active-hover'));
+    addZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      addZone.classList.remove('active-hover');
+      if (e.dataTransfer.files.length > 0) addTrackToScene(scene.id, e.dataTransfer.files[0]);
+    });
+
+    // Track-level events
+    card.querySelectorAll('.track-param-input').forEach(input => {
+      input.addEventListener('change', () => {
+        const trackId = input.dataset.trackId;
+        const field = input.dataset.field;
+        const track = scene.tracks.find(t => t.id === trackId);
+        if (!track) return;
+        if (field === 'endTime' && (input.value === '' || isNaN(parseFloat(input.value)))) {
+          track.endTime = null;
+        } else {
+          track[field] = parseFloat(input.value) || 0;
+        }
+        saveCurrentConfigToLocalStorage();
+      });
+    });
+
+    card.querySelectorAll('.track-delete').forEach(btn => {
+      btn.addEventListener('click', () => removeTrackFromScene(scene.id, btn.dataset.trackId));
+    });
+
+    // Track drag handles for reorder within scene
+    card.querySelectorAll('.track-drag-handle').forEach(handle => {
+      handle.addEventListener('dragstart', (e) => {
+        e.stopPropagation(); // Don't trigger scene drag
+        handle.closest('.scene-track-row').classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', `track:${scene.id}:${handle.dataset.trackId}`);
+      });
+      handle.addEventListener('dragend', () => {
+        card.querySelectorAll('.scene-track-row.dragging').forEach(r => r.classList.remove('dragging'));
+        card.querySelectorAll('.track-drop-indicator').forEach(el => el.remove());
+      });
+    });
+
+    // Track drop zones within scene
+    card.querySelectorAll('.scene-track-row').forEach(row => {
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const data = e.dataTransfer.types.includes('text/plain');
+        if (!data) return;
+        card.querySelectorAll('.track-drop-indicator').forEach(el => el.remove());
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const indicator = document.createElement('div');
+        indicator.className = 'track-drop-indicator';
+        if (e.clientY < midY) row.before(indicator);
+        else row.after(indicator);
+      });
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        card.querySelectorAll('.track-drop-indicator').forEach(el => el.remove());
+        const text = e.dataTransfer.getData('text/plain');
+        if (!text.startsWith('track:')) return;
+        const [, dropSceneId, dragTrackId] = text.split(':');
+        if (parseInt(dropSceneId) !== scene.id) return;
+        const dropTrackId = row.dataset.trackId;
+        if (dragTrackId === dropTrackId) return;
+        const fromIdx = scene.tracks.findIndex(t => t.id === dragTrackId);
+        const toIdx = scene.tracks.findIndex(t => t.id === dropTrackId);
+        if (fromIdx < 0 || toIdx < 0) return;
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        let insertIdx = e.clientY < midY ? toIdx : toIdx + 1;
+        if (fromIdx < insertIdx) insertIdx--;
+        const [moved] = scene.tracks.splice(fromIdx, 1);
+        scene.tracks.splice(insertIdx, 0, moved);
+        renderScenes();
+        saveCurrentConfigToLocalStorage();
+      });
     });
 
     // Cue trigger
@@ -373,19 +488,15 @@ function bindSceneEvents() {
 // Scene CRUD Operations
 // ==========================================================================
 function addScene() {
-  const newScene = {
+  scenes.push({
     id: nextSceneId++,
     name: `新环节 ${scenes.length + 1}`,
-    assignedTrackId: null,
-    assignedTrackName: null,
-    buffer: null,
+    playMode: 'sequential',
     fadeIn: 2.0,
     fadeOut: 2.0,
-    startTime: 0,
-    endTime: null,
-    loop: false
-  };
-  scenes.push(newScene);
+    loop: false,
+    tracks: []
+  });
   renderScenes();
   saveCurrentConfigToLocalStorage();
 }
@@ -400,10 +511,110 @@ function deleteScene(sceneId) {
     stopLivePlayback();
   }
 
+  const scene = scenes.find(s => s.id === sceneId);
+  if (scene) {
+    scene.tracks.forEach(t => {
+      if (t.assignedTrackId) deleteCachedAudioFile(t.assignedTrackId).catch(() => {});
+    });
+  }
+
   scenes = scenes.filter(s => s.id !== sceneId);
-  deleteCachedAudioFile(`scene_${sceneId}_active`).catch(() => {});
   renderScenes();
   saveCurrentConfigToLocalStorage();
+}
+
+function moveSceneUp(sceneId) {
+  const idx = scenes.findIndex(s => s.id === sceneId);
+  if (idx <= 0) return;
+  [scenes[idx - 1], scenes[idx]] = [scenes[idx], scenes[idx - 1]];
+  renderScenes();
+  saveCurrentConfigToLocalStorage();
+}
+
+function moveSceneDown(sceneId) {
+  const idx = scenes.findIndex(s => s.id === sceneId);
+  if (idx < 0 || idx >= scenes.length - 1) return;
+  [scenes[idx], scenes[idx + 1]] = [scenes[idx + 1], scenes[idx]];
+  renderScenes();
+  saveCurrentConfigToLocalStorage();
+}
+
+function getSceneCardAtY(y) {
+  const cards = scenesFlowList.querySelectorAll('.scene-item-card');
+  for (const card of cards) {
+    const rect = card.getBoundingClientRect();
+    if (y >= rect.top && y <= rect.bottom) return card;
+  }
+  return null;
+}
+
+function handleSceneDragOver(e) {
+  if (!sceneDragState) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+
+  // Remove existing indicator
+  scenesFlowList.querySelectorAll('.scene-drop-indicator').forEach(el => el.remove());
+
+  const targetCard = getSceneCardAtY(e.clientY);
+  if (!targetCard) return;
+  const targetId = parseInt(targetCard.dataset.sceneId);
+  if (targetId === sceneDragState.sourceId) return;
+
+  const rect = targetCard.getBoundingClientRect();
+  const midY = rect.top + rect.height / 2;
+  const indicator = document.createElement('div');
+  indicator.className = 'scene-drop-indicator';
+
+  if (e.clientY < midY) {
+    targetCard.before(indicator);
+    sceneDragState.dropTargetId = targetId;
+    sceneDragState.dropPosition = 'before';
+  } else {
+    targetCard.after(indicator);
+    sceneDragState.dropTargetId = targetId;
+    sceneDragState.dropPosition = 'after';
+  }
+}
+
+function handleSceneDrop(e) {
+  e.preventDefault();
+  if (!sceneDragState || sceneDragState.dropTargetId == null) {
+    sceneDragState = null;
+    scenesFlowList.querySelectorAll('.scene-drop-indicator').forEach(el => el.remove());
+    return;
+  }
+
+  const fromIdx = scenes.findIndex(s => s.id === sceneDragState.sourceId);
+  const toIdx = scenes.findIndex(s => s.id === sceneDragState.dropTargetId);
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) {
+    sceneDragState = null;
+    renderScenes();
+    return;
+  }
+
+  // Remove the dragged item first
+  const [moved] = scenes.splice(fromIdx, 1);
+
+  // Calculate insert position in the modified array
+  let insertIdx;
+  if (fromIdx < toIdx) {
+    insertIdx = sceneDragState.dropPosition === 'after' ? toIdx : toIdx - 1;
+  } else {
+    insertIdx = sceneDragState.dropPosition === 'after' ? toIdx + 1 : toIdx;
+  }
+
+  scenes.splice(insertIdx, 0, moved);
+
+  sceneDragState = null;
+  renderScenes();
+  saveCurrentConfigToLocalStorage();
+}
+
+function handleSceneDragEnd(e) {
+  sceneDragState = null;
+  scenesFlowList.querySelectorAll('.scene-drop-indicator').forEach(el => el.remove());
+  scenesFlowList.querySelectorAll('.scene-item-card.dragging').forEach(el => el.classList.remove('dragging'));
 }
 
 // ==========================================================================
@@ -461,6 +672,11 @@ function bindGlobalEventHandlers() {
     if (e.dataTransfer.files.length > 0) assignCustomFileToPadConfig(e.dataTransfer.files[0]);
   });
 
+  // Scene reorder: container-level drag events
+  scenesFlowList.addEventListener('dragover', handleSceneDragOver);
+  scenesFlowList.addEventListener('drop', handleSceneDrop);
+  scenesFlowList.addEventListener('dragend', handleSceneDragEnd);
+
   window.addEventListener('resize', handleCanvasResize);
 }
 
@@ -491,9 +707,27 @@ function getAudioContext() {
     soundboardGain.gain.setValueAtTime(0.8, audioCtx.currentTime);
 
     requestAnimationFrame(updateVUMetersLoop);
+
+    audioCtx.onstatechange = () => {
+      if (audioCtx.state === 'running' && !vuLoopRunning) {
+        requestAnimationFrame(updateVUMetersLoop);
+      }
+    };
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().then(() => {
+      if (!vuLoopRunning) requestAnimationFrame(updateVUMetersLoop);
+    });
+  }
   return audioCtx;
+}
+
+// LED System Clock — store interval ID so it can be cleared if needed
+let ledClockIntervalId = null;
+
+function startLEDClock() {
+  if (ledClockIntervalId) clearInterval(ledClockIntervalId);
+  ledClockIntervalId = setInterval(updateLEDClock, 1000);
 }
 
 // ==========================================================================
@@ -513,71 +747,496 @@ function formatTime(secs) {
 }
 
 // ==========================================================================
-// Scene Assign & Audio Decoding
+// Playlist Utilities
 // ==========================================================================
-function handleSceneFileSelect(e, sceneId) {
-  if (e.target.files.length > 0) assignAudioToScene(e.target.files[0], sceneId);
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
-async function assignAudioToScene(file, sceneId) {
-  const context = getAudioContext();
-  const scene = scenes.find(s => s.id === sceneId);
-  if (!scene) return;
+function buildPlayOrder(scene) {
+  if (scene.playMode === 'random') {
+    return shuffleArray(scene.tracks.map((_, i) => i));
+  }
+  return scene.tracks.map((_, i) => i);
+}
 
-  const label = document.getElementById(`scene-track-name-${sceneId}`);
-  const dropzone = document.getElementById(`scene-dropzone-${sceneId}`);
-
-  label.textContent = `⏳ DECODING: ${file.name}`;
-  dropzone.classList.add('assigned');
-
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const trackId = `scene_${sceneId}_active`;
-
-    showLoaderOverlay('CACHING SOUND TRACK', 'Writing audio buffer persistently into local database...');
-    await cacheAudioFile(trackId, file);
-    hideLoaderOverlay();
-
-    const decodedBuffer = await context.decodeAudioData(arrayBuffer);
-
-    scene.buffer = decodedBuffer;
-    scene.assignedTrackId = trackId;
-    scene.assignedTrackName = file.name;
-
-    saveCurrentConfigToLocalStorage();
-
-    label.textContent = `🎵 ${file.name} (${formatTime(decodedBuffer.duration)})`;
-    label.title = file.name;
-
-    if (activeSceneId === sceneId) {
-      activeDrawingBuffer = decodedBuffer;
-      deckDisplayTrackTitle.textContent = file.name;
-      drawDeckWaveform(decodedBuffer);
-      deckValTotalDuration.textContent = formatTime(decodedBuffer.duration);
-    }
-
-    console.log(`场景 ${sceneId} 配乐成功分配并缓存：`, file.name);
-  } catch (err) {
-    console.error(`场景 ${sceneId} 配乐载入失败:`, err);
-    label.textContent = `❌ 载入失败，请重新上传`;
-    dropzone.classList.remove('assigned');
-    hideLoaderOverlay();
-    alert(`加载文件 "${file.name}" 失败，请确认它是有效的音频格式。`);
+function clampTrackFade(track) {
+  if (!track.buffer) return;
+  const effectiveDuration = (track.endTime || track.buffer.duration) - (track.startTime || 0);
+  if (effectiveDuration <= 0) return;
+  track.fadeIn = Math.min(track.fadeIn, effectiveDuration * 0.5);
+  track.fadeOut = Math.min(track.fadeOut, effectiveDuration * 0.5);
+  if (track.fadeIn + track.fadeOut > effectiveDuration) {
+    const ratio = effectiveDuration / (track.fadeIn + track.fadeOut);
+    track.fadeIn *= ratio;
+    track.fadeOut *= ratio;
   }
 }
 
 // ==========================================================================
-// Overlapping Crossfade Scene Cue Playback Engine (with startTime/endTime/loop)
+// Scene Track Management
+// ==========================================================================
+async function addTrackToScene(sceneId, file) {
+  const context = getAudioContext();
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!scene) return;
+
+  const trackId = `t${nextTrackId++}`;
+  const assignedTrackId = `scene_${sceneId}_${trackId}`;
+
+  try {
+    showLoaderOverlay('CACHING AUDIO TRACK', 'Writing audio buffer persistently into local database...');
+    await cacheAudioFile(assignedTrackId, file);
+    hideLoaderOverlay();
+
+    const arrayBuffer = await file.arrayBuffer();
+    const decodedBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+
+    scene.tracks.push({
+      id: trackId,
+      buffer: decodedBuffer,
+      assignedTrackId: assignedTrackId,
+      assignedTrackName: file.name,
+      startTime: 0,
+      endTime: null,
+      fadeIn: 0,
+      fadeOut: 0
+    });
+
+    renderScenes();
+    saveCurrentConfigToLocalStorage();
+  } catch (err) {
+    hideLoaderOverlay();
+    console.error('音频加载失败:', err);
+    alert(`加载文件 "${file.name}" 失败，请确认它是有效的音频格式。`);
+  }
+}
+
+function removeTrackFromScene(sceneId, trackId) {
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!scene) return;
+
+  const track = scene.tracks.find(t => t.id === trackId);
+  if (!track) return;
+
+  // If scene is currently playing and this track is involved
+  if (activeSceneId === sceneId && activeBgmSources[sceneId]) {
+    const state = activeBgmSources[sceneId];
+    const currentIndex = state.playOrder[state.currentOrderIndex];
+    const currentTrack = scene.tracks[currentIndex];
+
+    if (currentTrack && currentTrack.id === trackId) {
+      // Deleting the currently playing track
+      if (state.crossfadeTimer) clearTimeout(state.crossfadeTimer);
+      try { state.currentSource?.stop(); state.currentSource?.disconnect(); } catch(e) {}
+      try { state.currentGain?.disconnect(); } catch(e) {}
+
+      if (scene.tracks.length <= 1) {
+        stopLivePlayback();
+      } else {
+        // Remove the track, rebuild playOrder, advance
+        scene.tracks = scene.tracks.filter(t => t.id !== trackId);
+        state.playOrder = buildPlayOrder(scene);
+        state.currentOrderIndex = 0;
+        if (state.playOrder.length > 0) {
+          playTrackInScene(sceneId, 0);
+        } else {
+          stopLivePlayback();
+        }
+      }
+      if (track.assignedTrackId) deleteCachedAudioFile(track.assignedTrackId).catch(() => {});
+      renderScenes();
+      saveCurrentConfigToLocalStorage();
+      return;
+    }
+  }
+
+  scene.tracks = scene.tracks.filter(t => t.id !== trackId);
+  if (track.assignedTrackId) deleteCachedAudioFile(track.assignedTrackId).catch(() => {});
+  renderScenes();
+  saveCurrentConfigToLocalStorage();
+}
+
+function moveTrackUp(sceneId, trackId) {
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!scene) return;
+  const idx = scene.tracks.findIndex(t => t.id === trackId);
+  if (idx <= 0) return;
+  [scene.tracks[idx - 1], scene.tracks[idx]] = [scene.tracks[idx], scene.tracks[idx - 1]];
+
+  // Sync playOrder if scene is playing
+  if (activeSceneId === sceneId && activeBgmSources[sceneId]) {
+    const state = activeBgmSources[sceneId];
+    const posA = state.playOrder.indexOf(idx - 1);
+    const posB = state.playOrder.indexOf(idx);
+    if (posA >= 0 && posB >= 0) {
+      [state.playOrder[posA], state.playOrder[posB]] = [state.playOrder[posB], state.playOrder[posA]];
+    }
+  }
+
+  renderScenes();
+  saveCurrentConfigToLocalStorage();
+}
+
+function moveTrackDown(sceneId, trackId) {
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!scene) return;
+  const idx = scene.tracks.findIndex(t => t.id === trackId);
+  if (idx < 0 || idx >= scene.tracks.length - 1) return;
+  [scene.tracks[idx], scene.tracks[idx + 1]] = [scene.tracks[idx + 1], scene.tracks[idx]];
+
+  if (activeSceneId === sceneId && activeBgmSources[sceneId]) {
+    const state = activeBgmSources[sceneId];
+    const posA = state.playOrder.indexOf(idx);
+    const posB = state.playOrder.indexOf(idx + 1);
+    if (posA >= 0 && posB >= 0) {
+      [state.playOrder[posA], state.playOrder[posB]] = [state.playOrder[posB], state.playOrder[posA]];
+    }
+  }
+
+  renderScenes();
+  saveCurrentConfigToLocalStorage();
+}
+
+// ==========================================================================
+// Playlist Playback Engine
+// ==========================================================================
+function playTrackInScene(sceneId, orderIndex) {
+  const context = getAudioContext();
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!scene || scene.tracks.length === 0) return;
+
+  let state = activeBgmSources[sceneId];
+  const isFirstTrack = !state;
+
+  const trackIdx = state ? state.playOrder[orderIndex] : buildPlayOrder(scene)[orderIndex];
+  const track = scene.tracks[trackIdx];
+  if (!track || !track.buffer) return;
+
+  const now = context.currentTime;
+
+  // Ensure scene-level gain node exists
+  if (!state) {
+    const sceneGainNode = context.createGain();
+    sceneGainNode.connect(bgmGain);
+    const playOrder = buildPlayOrder(scene);
+    state = {
+      sceneGainNode,
+      currentSource: null,
+      currentGain: null,
+      playOrder,
+      currentOrderIndex: orderIndex,
+      isPlaying: true,
+      crossfadeTimer: null,
+      transitionScheduled: false,
+      needsAdvance: false,
+      startTimestamp: now
+    };
+    activeBgmSources[sceneId] = state;
+  }
+
+  const effectiveStart = track.startTime || 0;
+  const effectiveEnd = track.endTime || track.buffer.duration;
+  const effectiveDuration = effectiveEnd - effectiveStart;
+
+  if (effectiveDuration <= 0) return;
+
+  // Clamp fade times so they never exceed half the effective duration
+  clampTrackFade(track);
+
+  // Create track-level source + gain
+  const source = context.createBufferSource();
+  source.buffer = track.buffer;
+  source.loop = false;
+
+  const trackGain = context.createGain();
+  source.connect(trackGain);
+  trackGain.connect(state.sceneGainNode);
+
+  // Determine fade-in: scene-level for first track, track-level for transitions
+  const fadeInTime = isFirstTrack ? scene.fadeIn : (track.fadeIn || 0);
+
+  if (isFirstTrack && !isDuckingActive) {
+    // Scene start: apply scene-level fade-in
+    state.sceneGainNode.gain.setValueAtTime(0, now);
+    state.sceneGainNode.gain.linearRampToValueAtTime(bgmVolume, now + fadeInTime);
+    trackGain.gain.setValueAtTime(1, now);
+  } else if (isFirstTrack && isDuckingActive) {
+    state.sceneGainNode.gain.setValueAtTime(0, now);
+    state.sceneGainNode.gain.linearRampToValueAtTime(0.25 * bgmVolume, now + fadeInTime);
+    trackGain.gain.setValueAtTime(1, now);
+  } else {
+    // Inter-track transition: track-level fade-in, scene gain stays constant
+    trackGain.gain.setValueAtTime(0, now);
+    if (fadeInTime > 0) {
+      trackGain.gain.linearRampToValueAtTime(1, now + fadeInTime);
+    } else {
+      trackGain.gain.setValueAtTime(1, now);
+    }
+  }
+
+  source.start(now, effectiveStart, effectiveDuration);
+
+  // Update state
+  state.currentSource = source;
+  state.currentGain = trackGain;
+  state.currentOrderIndex = orderIndex;
+  state.isPlaying = true;
+  state.transitionScheduled = false;
+  state.needsAdvance = false;
+  state.startTimestamp = now;
+
+  source.onended = () => {
+    if (state.currentSource !== source) return; // already replaced
+    if (!state.isPlaying) return;
+    if (state.transitionScheduled) return;
+
+    state.needsAdvance = true;
+    advanceToNextTrack(sceneId);
+  };
+
+  // Schedule crossfade before track ends
+  const crossfadeDuration = Math.max(track.fadeOut || 0, 0);
+  const preCrossfadeTime = effectiveDuration - crossfadeDuration;
+  if (preCrossfadeTime > 0 && scene.tracks.length > 1) {
+    scheduleNextTrackCrossfade(sceneId, preCrossfadeTime);
+  }
+
+  // Update UI
+  updateTrackDeckInfo(sceneId);
+  if (isFirstTrack) {
+    const targetCard = document.getElementById(`scene-card-${sceneId}`);
+    if (targetCard) targetCard.classList.add('active-on-air');
+    const targetStatus = document.getElementById(`scene-status-${sceneId}`);
+    if (targetStatus) targetStatus.textContent = 'ON AIR';
+  }
+
+  playbackStartTime = context.currentTime;
+  playbackOffset = effectiveStart;
+  if (isFirstTrack) {
+    if (activeVisualizerInterval) cancelAnimationFrame(activeVisualizerInterval);
+    activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
+  }
+}
+
+function scheduleNextTrackCrossfade(sceneId, delaySeconds) {
+  const state = activeBgmSources[sceneId];
+  if (!state || state.transitionScheduled) return;
+
+  state.transitionScheduled = true;
+  if (state.crossfadeTimer) clearTimeout(state.crossfadeTimer);
+
+  state.crossfadeTimer = setTimeout(() => {
+    if (!state.isPlaying) return;
+    advanceToNextTrack(sceneId);
+  }, delaySeconds * 1000);
+}
+
+function advanceToNextTrack(sceneId, nextOrderIndex) {
+  const context = getAudioContext();
+  const scene = scenes.find(s => s.id === sceneId);
+  const state = activeBgmSources[sceneId];
+  if (!scene || !state) return;
+
+  if (state.crossfadeTimer) { clearTimeout(state.crossfadeTimer); state.crossfadeTimer = null; }
+  state.transitionScheduled = false;
+  state.needsAdvance = false;
+
+  // Determine next track index
+  let nextIdx;
+  if (nextOrderIndex !== undefined) {
+    nextIdx = nextOrderIndex;
+  } else {
+    nextIdx = state.currentOrderIndex + 1;
+    if (nextIdx >= state.playOrder.length) {
+      if (scene.loop) {
+        state.playOrder = buildPlayOrder(scene); // reshuffle for random mode
+        nextIdx = 0;
+      } else {
+        // Playlist finished — fade out scene
+        const fadeOutTime = scene.fadeOut || 2.0;
+        const now = context.currentTime;
+        state.sceneGainNode.gain.setValueAtTime(state.sceneGainNode.gain.value, now);
+        state.sceneGainNode.gain.linearRampToValueAtTime(0.0001, now + fadeOutTime);
+        const oldSource = state.currentSource;
+        const oldGain = state.currentGain;
+        const sceneGain = state.sceneGainNode;
+        setTimeout(() => {
+          try { oldSource?.stop(); oldSource?.disconnect(); oldGain?.disconnect(); } catch(e) {}
+          try { sceneGain?.disconnect(); } catch(e) {}
+          delete activeBgmSources[sceneId];
+        }, (fadeOutTime + 0.2) * 1000);
+        const card = document.getElementById(`scene-card-${sceneId}`);
+        if (card) card.classList.remove('active-on-air');
+        const status = document.getElementById(`scene-status-${sceneId}`);
+        if (status) status.textContent = 'STANDBY';
+        if (activeSceneId === sceneId) {
+          activeSceneId = null;
+          masterStatusTag.textContent = 'STANDBY';
+          masterStatusTag.className = 'status-indicator-tag status-ready';
+          btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+        }
+        return;
+      }
+    }
+  }
+
+  const now = context.currentTime;
+  const nextTrackIdx = state.playOrder[nextIdx];
+  const nextTrack = scene.tracks[nextTrackIdx];
+
+  // Guard against infinite recursion: if we've looped through all tracks and
+  // none have a valid buffer, abort rather than recurse indefinitely.
+  if (!nextTrack || !nextTrack.buffer) {
+    const safeNextIdx = nextIdx + 1;
+    if (safeNextIdx >= state.playOrder.length) {
+      // No valid tracks at all — clean up this specific scene's state without
+      // touching activeSceneId (which may already point to a different scene).
+      console.warn(`[WedMix] 场景 ${sceneId} 中所有轨道均无有效音频，停止播放。`);
+      try { state.currentSource?.stop(); state.currentSource?.disconnect(); state.currentGain?.disconnect(); state.sceneGainNode?.disconnect(); } catch(e) {}
+      delete activeBgmSources[sceneId];
+      const _card = document.getElementById(`scene-card-${sceneId}`);
+      if (_card) _card.classList.remove('active-on-air');
+      const _status = document.getElementById(`scene-status-${sceneId}`);
+      if (_status) _status.textContent = 'STANDBY';
+      if (activeSceneId === sceneId) {
+        activeSceneId = null;
+        masterStatusTag.textContent = 'STANDBY';
+        masterStatusTag.className = 'status-indicator-tag status-ready';
+        btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+      }
+      return;
+    }
+    advanceToNextTrack(sceneId, safeNextIdx);
+    return;
+  }
+
+  const effectiveStart = nextTrack.startTime || 0;
+  const effectiveEnd = nextTrack.endTime || nextTrack.buffer.duration;
+  const effectiveDuration = effectiveEnd - effectiveStart;
+  if (effectiveDuration <= 0) {
+    const safeNextIdx = nextIdx + 1;
+    if (safeNextIdx >= state.playOrder.length) {
+      console.warn(`[WedMix] 场景 ${sceneId} 中所有轨道有效时长均为零，停止播放。`);
+      try { state.currentSource?.stop(); state.currentSource?.disconnect(); state.currentGain?.disconnect(); state.sceneGainNode?.disconnect(); } catch(e) {}
+      delete activeBgmSources[sceneId];
+      const _card = document.getElementById(`scene-card-${sceneId}`);
+      if (_card) _card.classList.remove('active-on-air');
+      const _status = document.getElementById(`scene-status-${sceneId}`);
+      if (_status) _status.textContent = 'STANDBY';
+      if (activeSceneId === sceneId) {
+        activeSceneId = null;
+        masterStatusTag.textContent = 'STANDBY';
+        masterStatusTag.className = 'status-indicator-tag status-ready';
+        btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+      }
+      return;
+    }
+    advanceToNextTrack(sceneId, safeNextIdx);
+    return;
+  }
+
+  // Create new track source + gain
+  const newSource = context.createBufferSource();
+  newSource.buffer = nextTrack.buffer;
+  newSource.loop = false;
+  const newTrackGain = context.createGain();
+  newSource.connect(newTrackGain);
+  newTrackGain.connect(state.sceneGainNode);
+
+  // Crossfade: max of current track's fadeOut and next track's fadeIn
+  const fadeOutTime = (state.currentGain && state.currentSource) ?
+    Math.max(scene.tracks[state.playOrder[state.currentOrderIndex]]?.fadeOut || 0, nextTrack.fadeIn || 0) :
+    (nextTrack.fadeIn || 0);
+
+  // Start new track
+  newTrackGain.gain.setValueAtTime(0, now);
+  if (fadeOutTime > 0) {
+    newTrackGain.gain.linearRampToValueAtTime(1, now + fadeOutTime);
+  } else {
+    newTrackGain.gain.setValueAtTime(1, now);
+  }
+  newSource.start(now, effectiveStart, effectiveDuration);
+
+  // Fade out old track
+  if (state.currentGain && state.currentSource) {
+    const oldGain = state.currentGain;
+    const oldSource = state.currentSource;
+    oldGain.gain.setValueAtTime(oldGain.gain.value, now);
+    oldGain.gain.linearRampToValueAtTime(0, now + fadeOutTime);
+    setTimeout(() => { try { oldSource.stop(); oldSource.disconnect(); oldGain.disconnect(); } catch(e) {} }, (fadeOutTime + 0.5) * 1000);
+  }
+
+  // Update state
+  state.currentSource = newSource;
+  state.currentGain = newTrackGain;
+  state.currentOrderIndex = nextIdx;
+  state.isPlaying = true;
+  state.transitionScheduled = false;
+  state.startTimestamp = now;
+
+  newSource.onended = () => {
+    if (state.currentSource !== newSource) return;
+    if (!state.isPlaying) return;
+    if (state.transitionScheduled) return;
+    state.needsAdvance = true;
+    advanceToNextTrack(sceneId);
+  };
+
+  // Schedule next crossfade
+  const nextCrossfadeDuration = nextTrack.fadeOut || 0;
+  const preCrossfadeTime = effectiveDuration - nextCrossfadeDuration;
+  if (preCrossfadeTime > 0 && scene.tracks.length > 1) {
+    scheduleNextTrackCrossfade(sceneId, preCrossfadeTime);
+  }
+
+  playbackStartTime = context.currentTime;
+  playbackOffset = effectiveStart;
+  updateTrackDeckInfo(sceneId);
+}
+
+function updateTrackDeckInfo(sceneId) {
+  const state = activeBgmSources[sceneId];
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!state || !scene) return;
+
+  const trackIdx = state.playOrder[state.currentOrderIndex];
+  const track = scene.tracks[trackIdx];
+  if (!track) return;
+
+  activeDrawingBuffer = track.buffer;
+  deckDisplayTrackTitle.textContent = track.assignedTrackName || '未知曲目';
+  drawDeckWaveform(track.buffer);
+  deckValTotalDuration.textContent = formatTime(track.buffer.duration);
+
+  // Update track highlight in scene card
+  const sceneCard = document.getElementById(`scene-card-${sceneId}`);
+  if (sceneCard) {
+    sceneCard.querySelectorAll('.scene-track-row').forEach((row, i) => {
+      row.classList.toggle('track-active', i === trackIdx);
+    });
+  }
+
+  // Update crossfade info display
+  deckValCrossfadePreset.textContent = `I:${scene.fadeIn.toFixed(1)}s / O:${scene.fadeOut.toFixed(1)}s`;
+}
+
+// ==========================================================================
+// Scene Cue Playback Engine (Playlist-based)
 // ==========================================================================
 function triggerSceneCue(sceneId) {
   if (isConsoleLocked) { console.warn("调音台控制面板已锁定，屏蔽触发。"); return; }
 
-  const context = getAudioContext();
   const targetScene = scenes.find(s => s.id === sceneId);
   if (!targetScene) return;
 
-  if (!targetScene.buffer) {
-    alert(`仪式场景 "${targetScene.name}" 尚未分配背景配乐！请先上传音频。`);
+  if (targetScene.tracks.length === 0) {
+    alert(`仪式场景 "${targetScene.name}" 尚未添加任何音频文件！请先上传。`);
     return;
   }
 
@@ -594,137 +1253,128 @@ function triggerSceneCue(sceneId) {
   masterStatusTag.textContent = `SCENE ${sceneId} ACTIVE`;
   masterStatusTag.className = 'status-indicator-tag status-active';
 
-  // FADE OUT PREVIOUS
-  const now = context.currentTime;
-
+  // FADE OUT PREVIOUS scene
   if (prevSceneId && activeBgmSources[prevSceneId]) {
     const prev = activeBgmSources[prevSceneId];
     const prevScene = scenes.find(s => s.id === prevSceneId);
     const fadeOutTime = prevScene ? prevScene.fadeOut : 2.0;
+    const now = getAudioContext().currentTime;
 
-    prev.gainNode.gain.setValueAtTime(prev.gainNode.gain.value, now);
-    prev.gainNode.gain.linearRampToValueAtTime(0.0001, now + fadeOutTime);
+    prev.sceneGainNode.gain.setValueAtTime(prev.sceneGainNode.gain.value, now);
+    prev.sceneGainNode.gain.linearRampToValueAtTime(0.0001, now + fadeOutTime);
 
-    const oldSource = prev.sourceNode;
-    const oldGain = prev.gainNode;
-    setTimeout(() => { try { oldSource.stop(); oldSource.disconnect(); oldGain.disconnect(); } catch(e) {} }, (fadeOutTime + 0.2) * 1000);
-
+    const oldSource = prev.currentSource;
+    const oldGain = prev.currentGain;
+    const oldSceneGain = prev.sceneGainNode;
+    if (prev.crossfadeTimer) clearTimeout(prev.crossfadeTimer);
+    setTimeout(() => {
+      try { oldSource?.stop(); oldSource?.disconnect(); oldGain?.disconnect(); } catch(e) {}
+      try { oldSceneGain?.disconnect(); } catch(e) {}
+    }, (fadeOutTime + 0.2) * 1000);
     delete activeBgmSources[prevSceneId];
+
     const prevCard = document.getElementById(`scene-card-${prevSceneId}`);
     if (prevCard) prevCard.classList.remove('active-on-air');
     const prevStatus = document.getElementById(`scene-status-${prevSceneId}`);
     if (prevStatus) prevStatus.textContent = 'STANDBY';
   }
 
-  // FADE IN NEW — with startTime/endTime/loop support
-  const newSource = context.createBufferSource();
-  newSource.buffer = targetScene.buffer;
+  // Start new scene playlist from first track
+  playTrackInScene(sceneId, 0);
 
-  const effectiveStart = targetScene.startTime || 0;
-  const effectiveEnd = targetScene.endTime || targetScene.buffer.duration;
-  const effectiveDuration = effectiveEnd - effectiveStart;
-
-  if (targetScene.loop) {
-    newSource.loop = true;
-    newSource.loopStart = effectiveStart;
-    newSource.loopEnd = effectiveEnd;
-    newSource.start(now, effectiveStart); // No duration limit for loops
-  } else {
-    newSource.loop = false;
-    newSource.start(now, effectiveStart, effectiveDuration);
-  }
-
-  const newGain = context.createGain();
-  newSource.connect(newGain);
-  newGain.connect(bgmGain);
-
-  const fadeInTime = targetScene.fadeIn;
-  const initialGain = isDuckingActive ? 0.25 * bgmVolume : bgmVolume;
-
-  newGain.gain.setValueAtTime(0, now);
-  if (fadeInTime > 0) {
-    newGain.gain.linearRampToValueAtTime(initialGain, now + fadeInTime);
-  } else {
-    newGain.gain.setValueAtTime(initialGain, now);
-  }
-
-  activeBgmSources[sceneId] = { sourceNode: newSource, gainNode: newGain, startTime: now, isPlaying: true };
-
-  // Update UI
-  const targetCard = document.getElementById(`scene-card-${sceneId}`);
-  if (targetCard) targetCard.classList.add('active-on-air');
-  const targetStatus = document.getElementById(`scene-status-${sceneId}`);
-  if (targetStatus) targetStatus.textContent = 'ON AIR';
-
-  activeDrawingBuffer = targetScene.buffer;
-  deckDisplayTrackTitle.textContent = targetScene.assignedTrackName;
-  drawDeckWaveform(targetScene.buffer);
-  deckValTotalDuration.textContent = formatTime(targetScene.buffer.duration);
-  updateDeckCrossfadeInfo();
-
-  playbackStartTime = context.currentTime;
-  playbackOffset = effectiveStart;
-
-  if (activeVisualizerInterval) cancelAnimationFrame(activeVisualizerInterval);
-  activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
-
-  // Update loop button state to reflect current scene's loop
+  // Update loop button state
   btnLiveLoop.classList.toggle('active', targetScene.loop);
   btnLivePlayPause.innerHTML = `<span class="btn-icon">⏸️</span> <span class="btn-text">PAUSE PREVIEW</span>`;
 }
 
-function updateDeckCrossfadeInfo() {
-  if (!activeSceneId) { deckValCrossfadePreset.textContent = '2.0s'; return; }
-  const activeScene = scenes.find(s => s.id === activeSceneId);
-  if (activeScene) {
-    deckValCrossfadePreset.textContent = `I:${activeScene.fadeIn.toFixed(1)}s / O:${activeScene.fadeOut.toFixed(1)}s`;
-  }
-}
-
 // ==========================================================================
-// Transport Bar Control Logic
+// Transport Bar Control Logic (Playlist-aware)
 // ==========================================================================
 function toggleLivePlayback() {
   if (isConsoleLocked) return;
   if (!activeSceneId) return;
 
-  const prev = activeBgmSources[activeSceneId];
-  if (!prev) return;
+  const state = activeBgmSources[activeSceneId];
+  if (!state) return;
 
   const context = getAudioContext();
   const scene = scenes.find(s => s.id === activeSceneId);
 
-  if (prev.isPlaying) {
-    prev.isPlaying = false;
+  if (state.isPlaying) {
+    // Pause
+    state.isPlaying = false;
     btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">RESUME PLAY</span>`;
     cancelAnimationFrame(activeVisualizerInterval);
+    if (state.crossfadeTimer) { clearTimeout(state.crossfadeTimer); state.crossfadeTimer = null; }
 
     const elapsed = context.currentTime - playbackStartTime;
     playbackOffset += elapsed;
 
-    const effectiveEnd = scene ? (scene.endTime || activeDrawingBuffer.duration) : activeDrawingBuffer.duration;
+    // Calculate effective end of current track
+    const trackIdx = state.playOrder[state.currentOrderIndex];
+    const track = scene ? scene.tracks[trackIdx] : null;
+    const effectiveEnd = track ? (track.endTime || track.buffer.duration) : activeDrawingBuffer.duration;
+    const effectiveStart = track ? (track.startTime || 0) : 0;
     if (playbackOffset >= effectiveEnd) {
-      playbackOffset = scene ? (scene.startTime || 0) : 0;
+      playbackOffset = effectiveStart;
     }
 
-    try { prev.sourceNode.stop(); prev.sourceNode.disconnect(); } catch(e) {}
+    try { state.currentSource?.stop(); state.currentSource?.disconnect(); } catch(e) {}
   } else {
-    prev.isPlaying = true;
+    // Resume
+    state.isPlaying = true;
+    state.transitionScheduled = false;
+    state.needsAdvance = false;
     btnLivePlayPause.innerHTML = `<span class="btn-icon">⏸️</span> <span class="btn-text">PAUSE PREVIEW</span>`;
 
-    const newSource = context.createBufferSource();
-    newSource.buffer = activeDrawingBuffer;
+    const trackIdx = state.playOrder[state.currentOrderIndex];
+    const track = scene ? scene.tracks[trackIdx] : null;
+    if (!track || !track.buffer) return;
 
-    if (scene && scene.loop) {
-      newSource.loop = true;
-      newSource.loopStart = scene.startTime || 0;
-      newSource.loopEnd = scene.endTime || activeDrawingBuffer.duration;
+    const effectiveStart = track.startTime || 0;
+    const effectiveEnd = track.endTime || track.buffer.duration;
+    const remainingDuration = effectiveEnd - playbackOffset;
+
+    const newSource = context.createBufferSource();
+    newSource.buffer = track.buffer;
+    newSource.loop = false;
+
+    // Reconnect to sceneGainNode directly in case currentGain was disconnected
+    // during a scene switch while paused.
+    // IMPORTANT: connect before start() so the audio graph is wired up first.
+    if (!state.currentGain || !state.sceneGainNode) return;
+    try {
+      newSource.connect(state.currentGain);
+    } catch (e) {
+      // currentGain was disconnected — create a fresh one
+      const freshGain = context.createGain();
+      freshGain.gain.setValueAtTime(1, context.currentTime);
+      freshGain.connect(state.sceneGainNode);
+      state.currentGain = freshGain;
+      newSource.connect(freshGain);
     }
 
-    newSource.connect(prev.gainNode);
+    if (remainingDuration > 0.01) {
+      newSource.start(0, playbackOffset, remainingDuration);
+    }
     playbackStartTime = context.currentTime;
-    newSource.start(0, playbackOffset);
-    prev.sourceNode = newSource;
+    state.currentSource = newSource;
+    state.startTimestamp = context.currentTime;
+
+    newSource.onended = () => {
+      if (state.currentSource !== newSource) return;
+      if (!state.isPlaying) return;
+      if (state.transitionScheduled) return;
+      state.needsAdvance = true;
+      advanceToNextTrack(activeSceneId);
+    };
+
+    // Reschedule crossfade
+    const crossfadeDuration = track.fadeOut || 0;
+    const preCrossfadeTime = remainingDuration - crossfadeDuration;
+    if (preCrossfadeTime > 0 && scene.tracks.length > 1) {
+      scheduleNextTrackCrossfade(activeSceneId, preCrossfadeTime);
+    }
 
     activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
   }
@@ -734,9 +1384,11 @@ function stopLivePlayback() {
   if (isConsoleLocked) return;
   if (!activeSceneId) return;
 
-  const prev = activeBgmSources[activeSceneId];
-  if (prev) {
-    try { prev.sourceNode.stop(); prev.sourceNode.disconnect(); prev.gainNode.disconnect(); } catch(e) {}
+  const state = activeBgmSources[activeSceneId];
+  if (state) {
+    if (state.crossfadeTimer) clearTimeout(state.crossfadeTimer);
+    try { state.currentSource?.stop(); state.currentSource?.disconnect(); state.currentGain?.disconnect(); } catch(e) {}
+    try { state.sceneGainNode?.disconnect(); } catch(e) {}
     delete activeBgmSources[activeSceneId];
   }
 
@@ -758,7 +1410,6 @@ function stopLivePlayback() {
 }
 
 function toggleLiveLoop() {
-  // Toggle the active scene's loop property
   if (!activeSceneId) return;
   const scene = scenes.find(s => s.id === activeSceneId);
   if (!scene) return;
@@ -772,16 +1423,6 @@ function toggleLiveLoop() {
     const chk = card.querySelector('.scene-loop-checkbox');
     if (chk) chk.checked = scene.loop;
   }
-
-  // Apply to current playing source
-  if (activeBgmSources[scene.id]) {
-    const src = activeBgmSources[scene.id].sourceNode;
-    src.loop = scene.loop;
-    if (scene.loop) {
-      src.loopStart = scene.startTime || 0;
-      src.loopEnd = scene.endTime || (scene.buffer ? scene.buffer.duration : 0);
-    }
-  }
 }
 
 function handleConsoleLockToggle() {
@@ -794,7 +1435,7 @@ function handleConsoleLockToggle() {
 }
 
 // ==========================================================================
-// Visualizer Waveform Drawer & Marker Animators (with startTime/endTime)
+// Visualizer Waveform Drawer & Marker Animators (Track-level params)
 // ==========================================================================
 function drawDeckWaveform(audioBuffer) {
   const canvas = deckWaveformCanvas;
@@ -842,12 +1483,18 @@ function drawDeckWaveform(audioBuffer) {
     ctx.fillRect(i, y, 1.0, barHeight);
   }
 
-  // Draw startTime/endTime markers if active scene has them
-  if (activeSceneId) {
+  // Draw startTime/endTime markers for the current playing track
+  if (activeSceneId && activeBgmSources[activeSceneId]) {
+    const state = activeBgmSources[activeSceneId];
     const scene = scenes.find(s => s.id === activeSceneId);
     if (scene && audioBuffer.duration > 0) {
-      const startPx = ((scene.startTime || 0) / audioBuffer.duration) * width;
-      const endPx = ((scene.endTime || audioBuffer.duration) / audioBuffer.duration) * width;
+      const trackIdx = state.playOrder[state.currentOrderIndex];
+      const track = scene.tracks[trackIdx];
+      const trackStart = track ? (track.startTime || 0) : 0;
+      const trackEnd = track ? (track.endTime || audioBuffer.duration) : audioBuffer.duration;
+
+      const startPx = (trackStart / audioBuffer.duration) * width;
+      const endPx = (trackEnd / audioBuffer.duration) * width;
 
       // Dim regions outside the active range
       ctx.fillStyle = 'rgba(7, 7, 11, 0.6)';
@@ -857,8 +1504,8 @@ function drawDeckWaveform(audioBuffer) {
       // Start/end boundary lines
       ctx.strokeStyle = 'rgba(0, 242, 254, 0.6)';
       ctx.lineWidth = 1;
-      if (scene.startTime > 0) { ctx.beginPath(); ctx.moveTo(startPx, 0); ctx.lineTo(startPx, height); ctx.stroke(); }
-      if (scene.endTime) { ctx.beginPath(); ctx.moveTo(endPx, 0); ctx.lineTo(endPx, height); ctx.stroke(); }
+      if (trackStart > 0) { ctx.beginPath(); ctx.moveTo(startPx, 0); ctx.lineTo(startPx, height); ctx.stroke(); }
+      if (trackEnd < audioBuffer.duration) { ctx.beginPath(); ctx.moveTo(endPx, 0); ctx.lineTo(endPx, height); ctx.stroke(); }
     }
   }
 }
@@ -866,30 +1513,24 @@ function drawDeckWaveform(audioBuffer) {
 function animateDeckPlayhead() {
   if (!activeSceneId || !activeDrawingBuffer) return;
 
-  const prev = activeBgmSources[activeSceneId];
-  if (prev && prev.isPlaying) {
+  const state = activeBgmSources[activeSceneId];
+  if (state && state.isPlaying) {
     const elapsed = audioCtx.currentTime - playbackStartTime;
     const scene = scenes.find(s => s.id === activeSceneId);
-    const effectiveStart = scene ? (scene.startTime || 0) : 0;
-    const effectiveEnd = scene ? (scene.endTime || activeDrawingBuffer.duration) : activeDrawingBuffer.duration;
-    const effectiveDuration = effectiveEnd - effectiveStart;
+    const trackIdx = state.playOrder[state.currentOrderIndex];
+    const track = scene ? scene.tracks[trackIdx] : null;
+    const effectiveStart = track ? (track.startTime || 0) : 0;
+    const effectiveEnd = track ? (track.endTime || activeDrawingBuffer.duration) : activeDrawingBuffer.duration;
 
     let currentPos = playbackOffset + elapsed;
 
-    if (scene && scene.loop && effectiveDuration > 0) {
-      // For looping, wrap around within the active range
-      currentPos = effectiveStart + ((currentPos - effectiveStart) % effectiveDuration);
+    if (currentPos < effectiveEnd) {
       updatePlayheadMarkerUI(currentPos);
       deckValCurrentTime.textContent = formatTime(currentPos);
       activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
     } else {
-      if (currentPos < effectiveEnd) {
-        updatePlayheadMarkerUI(currentPos);
-        deckValCurrentTime.textContent = formatTime(currentPos);
-        activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
-      } else {
-        stopLivePlayback();
-      }
+      // Track ended, playhead will be updated by advanceToNextTrack
+      // Don't call stopLivePlayback here — the onended handler handles it
     }
   }
 }
@@ -977,7 +1618,7 @@ function assignCustomFileToPadConfig(file) {
   const reader = new FileReader();
   reader.onload = async (event) => {
     try {
-      const decodedBuffer = await context.decodeAudioData(event.target.result);
+      const decodedBuffer = await context.decodeAudioData(event.target.result.slice(0));
       padCustomFileInput.decodedBuffer = decodedBuffer;
       padCustomFileInput.fileName = file.name;
       padCustomFileInput.rawFile = file;
@@ -1037,6 +1678,18 @@ function resetPadConfigToDefault() {
     configSynthEffectSelect.value = def.synthEffectId;
     togglePadConfigTypeUI();
     deleteCachedAudioFile(`pad_${pad.id}_active`).catch(() => {});
+
+    pad.type = "synth";
+    pad.synthEffectId = def.synthEffectId;
+    pad.name = def.name;
+    pad.buffer = null;
+    pad.assignedTrackId = null;
+    pad.assignedTrackName = null;
+
+    const padBtn = document.getElementById(`pad-btn-${pad.id}`);
+    if (padBtn) padBtn.querySelector('.pad-title').textContent = def.name;
+
+    saveCurrentConfigToLocalStorage();
   }
 }
 
@@ -1054,6 +1707,12 @@ function toggleMCDucking() {
   } else {
     bgmGain.gain.setValueAtTime(bgmGain.gain.value, now);
     bgmGain.gain.linearRampToValueAtTime(bgmVolume, now + 0.5);
+
+    if (activeSceneId && activeBgmSources[activeSceneId]) {
+      const activeGain = activeBgmSources[activeSceneId].sceneGainNode.gain;
+      activeGain.setValueAtTime(activeGain.value, now);
+      activeGain.linearRampToValueAtTime(crossfaderGain * bgmVolume, now + 0.5);
+    }
   }
 }
 
@@ -1075,7 +1734,7 @@ function handleCrossfaderChange(e) {
   if (activeSceneId && activeBgmSources[activeSceneId]) {
     crossfaderGain = Math.max(0, Math.min(1, 1 - (val + 1) / 2));
     const targetGain = isDuckingActive ? 0.25 * crossfaderGain * bgmVolume : crossfaderGain * bgmVolume;
-    activeBgmSources[activeSceneId].gainNode.gain.setValueAtTime(targetGain, context.currentTime);
+    activeBgmSources[activeSceneId].sceneGainNode.gain.setValueAtTime(targetGain, context.currentTime);
   }
 }
 
@@ -1083,56 +1742,73 @@ function handleCrossfaderChange(e) {
 // 🚨 EMERGENCY FADE OUT
 // ==========================================================================
 function triggerEmergencyFadeOut() {
-  const context = getAudioContext();
-  const now = context.currentTime;
-  const fadeOutSecs = 1.5;
+  if (isEmergencyActive) return;
+  isEmergencyActive = true;
 
-  btnEmergencyFade.classList.add('flash-warning-red');
-  isConsoleLocked = true;
-  chkConsoleLock.checked = true;
-  chkConsoleLock.parentElement.classList.add('glow-red-lock');
+  try {
+    const context = getAudioContext();
+    const now = context.currentTime;
+    const fadeOutSecs = 1.5;
 
-  masterGain.gain.setValueAtTime(masterGain.gain.value, now);
-  masterGain.gain.linearRampToValueAtTime(0.0001, now + fadeOutSecs);
+    btnEmergencyFade.classList.add('flash-warning-red');
+    isConsoleLocked = true;
+    chkConsoleLock.checked = true;
+    chkConsoleLock.parentElement.classList.add('glow-red-lock');
 
-  setTimeout(() => {
-    Object.keys(activeBgmSources).forEach(sceneId => {
-      try { activeBgmSources[sceneId].sourceNode.stop(); activeBgmSources[sceneId].sourceNode.disconnect(); } catch(e) {}
-      const c = document.getElementById(`scene-card-${sceneId}`);
-      if (c) c.classList.remove('active-on-air');
-      const s = document.getElementById(`scene-status-${sceneId}`);
-      if (s) s.textContent = 'STANDBY';
-    });
-    activeBgmSources = {};
-    activeSceneId = null;
+    masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+    masterGain.gain.linearRampToValueAtTime(0.0001, now + fadeOutSecs);
 
-    activeSoundboardSources.forEach(src => { try { src.stop(); } catch(e) {} });
-    activeSoundboardSources = [];
+    setTimeout(() => {
+      Object.keys(activeBgmSources).forEach(sceneId => {
+        try { activeBgmSources[sceneId].currentSource?.stop(); activeBgmSources[sceneId].currentSource?.disconnect(); activeBgmSources[sceneId].currentGain?.disconnect(); activeBgmSources[sceneId].sceneGainNode?.disconnect(); } catch(e) {}
+        const c = document.getElementById(`scene-card-${sceneId}`);
+        if (c) c.classList.remove('active-on-air');
+        const s = document.getElementById(`scene-status-${sceneId}`);
+        if (s) s.textContent = 'STANDBY';
+      });
+      activeBgmSources = {};
+      activeSceneId = null;
 
-    cancelAnimationFrame(activeVisualizerInterval);
-    updatePlayheadMarkerUI(0);
-    deckValCurrentTime.textContent = '0:00.0';
-    playbackOffset = 0;
+      activeSoundboardSources.forEach(src => { try { src.stop(); } catch(e) {} });
+      activeSoundboardSources = [];
 
-    masterGain.gain.setValueAtTime(masterVolume, context.currentTime);
+      cancelAnimationFrame(activeVisualizerInterval);
+      updatePlayheadMarkerUI(0);
+      deckValCurrentTime.textContent = '0:00.0';
+      playbackOffset = 0;
 
-    isConsoleLocked = false;
-    chkConsoleLock.checked = false;
-    chkConsoleLock.parentElement.classList.remove('glow-red-lock');
-    btnEmergencyFade.classList.remove('flash-warning-red');
+      masterGain.gain.setValueAtTime(masterVolume, context.currentTime);
 
-    masterStatusTag.textContent = 'STANDBY';
-    masterStatusTag.className = 'status-indicator-tag status-ready';
-    btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
-    deckDisplayTrackTitle.textContent = 'NO ACTIVE TRACK';
-  }, fadeOutSecs * 1000 + 200);
+      isConsoleLocked = false;
+      chkConsoleLock.checked = false;
+      chkConsoleLock.parentElement.classList.remove('glow-red-lock');
+      btnEmergencyFade.classList.remove('flash-warning-red');
+
+      masterStatusTag.textContent = 'STANDBY';
+      masterStatusTag.className = 'status-indicator-tag status-ready';
+      btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+      deckDisplayTrackTitle.textContent = 'NO ACTIVE TRACK';
+      isEmergencyActive = false;
+    }, fadeOutSecs * 1000 + 200);
+  } catch (e) {
+    isEmergencyActive = false;
+    throw e;
+  }
 }
 
 // ==========================================================================
 // VU LED Bouncing Meter Animation Loop
 // ==========================================================================
 function updateVUMetersLoop() {
-  if (!audioCtx) return;
+  if (!audioCtx || audioCtx.state !== 'running') {
+    vuLoopRunning = false;
+    for (let i = 0; i < 15; i++) {
+      leftLEDs[i].classList.remove('lit');
+      rightLEDs[i].classList.remove('lit');
+    }
+    return;
+  }
+  vuLoopRunning = true;
   const arrayL = new Uint8Array(analyserL.frequencyBinCount);
   const arrayR = new Uint8Array(analyserR.frequencyBinCount);
   analyserL.getByteFrequencyData(arrayL);
@@ -1161,34 +1837,47 @@ async function loadCachedWeddingAssets() {
   try {
     const context = getAudioContext();
 
-    for (const scene of scenes) {
-      const trackId = `scene_${scene.id}_active`;
-      const fileBlob = await getCachedAudioFile(trackId);
-      if (fileBlob) {
-        const arrayBuf = await fileBlob.arrayBuffer();
-        const decodedBuffer = await context.decodeAudioData(arrayBuf);
-        scene.buffer = decodedBuffer;
-        scene.assignedTrackId = trackId;
-        scene.assignedTrackName = fileBlob.name;
-      }
-    }
+    // Build a flat list of all decode tasks and run them in parallel.
+    // Each task catches its own error so one bad file doesn't abort the rest.
+    const sceneTasks = scenes.flatMap(scene =>
+      scene.tracks
+        .filter(track => track.assignedTrackId)
+        .map(async track => {
+          try {
+            const fileBlob = await getCachedAudioFile(track.assignedTrackId);
+            if (fileBlob) {
+              const arrayBuf = await fileBlob.arrayBuffer();
+              const decodedBuffer = await context.decodeAudioData(arrayBuf.slice(0));
+              track.buffer = decodedBuffer;
+              if (fileBlob.name) track.assignedTrackName = fileBlob.name;
+            }
+          } catch (err) {
+            console.warn(`[WedMix] 场景轨道 ${track.assignedTrackId} 缓存恢复失败:`, err);
+          }
+        })
+    );
 
-    for (const pad of soundboard) {
-      const trackId = `pad_${pad.id}_active`;
-      const fileBlob = await getCachedAudioFile(trackId);
-      if (fileBlob) {
-        const arrayBuf = await fileBlob.arrayBuffer();
-        const decodedBuffer = await context.decodeAudioData(arrayBuf);
-        pad.buffer = decodedBuffer;
-        pad.assignedTrackId = trackId;
-        pad.assignedTrackName = fileBlob.name;
-        pad.type = 'custom';
-        const padBtn = document.getElementById(`pad-btn-${pad.id}`);
-        if (padBtn) padBtn.querySelector('.pad-title').textContent = fileBlob.name.replace(/\.[^/.]+$/, "");
+    const padTasks = soundboard.map(async pad => {
+      try {
+        const trackId = `pad_${pad.id}_active`;
+        const fileBlob = await getCachedAudioFile(trackId);
+        if (fileBlob) {
+          const arrayBuf = await fileBlob.arrayBuffer();
+          const decodedBuffer = await context.decodeAudioData(arrayBuf.slice(0));
+          pad.buffer = decodedBuffer;
+          pad.assignedTrackId = trackId;
+          pad.assignedTrackName = fileBlob.name;
+          pad.type = 'custom';
+          const padBtn = document.getElementById(`pad-btn-${pad.id}`);
+          if (padBtn) padBtn.querySelector('.pad-title').textContent = fileBlob.name.replace(/\.[^/.]+$/, "");
+        }
+      } catch (err) {
+        console.warn(`[WedMix] 音效板 ${pad.id} 缓存恢复失败:`, err);
       }
-    }
+    });
 
-    // Re-render to update track names in scene cards
+    await Promise.all([...sceneTasks, ...padTasks]);
+
     renderScenes();
   } catch(err) {
     console.error('从 IndexedDB 缓存恢复音频轨道时出错:', err);
@@ -1210,12 +1899,15 @@ async function saveWeddingConfigProfile() {
     const configObj = generateConfigObject(scheme, scenes, soundboard, 2.5);
     zip.file('config.json', JSON.stringify(configObj, null, 2));
 
-    // 2. Collect scene audio files
+    // 2. Collect scene audio files (per-track)
     for (const scene of scenes) {
-      if (scene.assignedTrackId && scene.assignedTrackName) {
-        const blob = await getCachedAudioFile(scene.assignedTrackId);
-        if (blob) {
-          zip.file(`audio/scene_${scene.id}_${scene.assignedTrackName}`, blob);
+      for (const track of scene.tracks) {
+        if (track.assignedTrackId && track.assignedTrackName) {
+          const blob = await getCachedAudioFile(track.assignedTrackId);
+          if (blob) {
+            const zipPath = `audio/scene_${scene.id}_${track.id}_${track.assignedTrackName}`;
+            zip.file(zipPath, blob);
+          }
         }
       }
     }
@@ -1279,25 +1971,60 @@ async function importFromZip(zipFile) {
     const configText = await configFile.async('string');
     const config = JSON.parse(configText);
 
+    // Validate required top-level fields
+    if (!config || typeof config !== 'object') throw new Error('config.json 格式无效');
+    if (!Array.isArray(config.scenes)) throw new Error('config.json 缺少 scenes 数组');
+    if (!Array.isArray(config.soundboard)) throw new Error('config.json 缺少 soundboard 数组');
+
     // 2. Apply config
     weddingSchemeName.value = config.schemeName || '';
 
-    // Rebuild scenes from config
+    // Rebuild scenes from config (support v3.0 tracks format and legacy)
     if (config.scenes && config.scenes.length > 0) {
-      scenes = config.scenes.map(cs => ({
-        id: cs.id,
-        name: cs.name,
-        assignedTrackId: cs.assignedTrackId || null,
-        assignedTrackName: cs.assignedTrackName || null,
-        buffer: null,
-        fadeIn: cs.fadeIn || 2.0,
-        fadeOut: cs.fadeOut || 2.0,
-        startTime: cs.startTime || 0,
-        endTime: cs.endTime || null,
-        loop: cs.loop || false
-      }));
-
-      // Update nextSceneId to be higher than any scene id
+      scenes = config.scenes.map(cs => {
+        if (cs.tracks && Array.isArray(cs.tracks)) {
+          return {
+            id: cs.id,
+            name: cs.name,
+            playMode: cs.playMode || 'sequential',
+            fadeIn: cs.fadeIn || 2.0,
+            fadeOut: cs.fadeOut || 2.0,
+            loop: cs.loop || false,
+            tracks: cs.tracks.map(t => ({
+              id: t.id,
+              buffer: null,
+              assignedTrackId: t.assignedTrackId || null,
+              assignedTrackName: t.assignedTrackName || null,
+              startTime: t.startTime || 0,
+              endTime: t.endTime || null,
+              fadeIn: t.fadeIn || 0,
+              fadeOut: t.fadeOut || 0
+            }))
+          };
+        }
+        const tracks = [];
+        if (cs.assignedTrackId) {
+          tracks.push({
+            id: `t${nextTrackId++}`,
+            buffer: null,
+            assignedTrackId: cs.assignedTrackId,
+            assignedTrackName: cs.assignedTrackName || null,
+            startTime: cs.startTime || 0,
+            endTime: cs.endTime || null,
+            fadeIn: 0,
+            fadeOut: 0
+          });
+        }
+        return {
+          id: cs.id,
+          name: cs.name,
+          playMode: 'sequential',
+          fadeIn: cs.fadeIn || 2.0,
+          fadeOut: cs.fadeOut || 2.0,
+          loop: cs.loop || false,
+          tracks
+        };
+      });
       nextSceneId = Math.max(...scenes.map(s => s.id)) + 1;
     }
 
@@ -1320,19 +2047,21 @@ async function importFromZip(zipFile) {
 
     for (const scene of scenes) {
       const cs = config.scenes.find(s => s.id === scene.id);
-      if (cs && cs.audioZipPath) {
-        const audioFile = zip.file(cs.audioZipPath);
+      if (!cs) continue;
+      const csTracks = cs.tracks || (cs.assignedTrackId ? [{ id: 't1', assignedTrackId: cs.assignedTrackId, assignedTrackName: cs.assignedTrackName, audioZipPath: cs.audioZipPath }] : []);
+      for (let ti = 0; ti < scene.tracks.length && ti < csTracks.length; ti++) {
+        const track = scene.tracks[ti];
+        const ct = csTracks[ti];
+        if (!ct || !ct.audioZipPath) continue;
+        const audioFile = zip.file(ct.audioZipPath);
         if (audioFile) {
           const arrayBuf = await audioFile.async('arraybuffer');
           const decodedBuffer = await context.decodeAudioData(arrayBuf.slice(0));
-
-          scene.buffer = decodedBuffer;
-          scene.assignedTrackId = `scene_${scene.id}_active`;
-
-          // Cache in IndexedDB for persistence
+          track.buffer = decodedBuffer;
+          track.assignedTrackId = track.assignedTrackId || `scene_${scene.id}_${track.id}`;
           const blob = await audioFile.async('blob');
-          const namedBlob = new File([blob], scene.assignedTrackName || `scene_${scene.id}.audio`, { type: blob.type || 'audio/mpeg' });
-          await cacheAudioFile(scene.assignedTrackId, namedBlob);
+          const namedBlob = new File([blob], track.assignedTrackName || `scene_${scene.id}_${track.id}.audio`, { type: blob.type || 'audio/mpeg' });
+          await cacheAudioFile(track.assignedTrackId, namedBlob);
         }
       }
     }
@@ -1373,28 +2102,65 @@ async function importFromJSON(jsonFile) {
   reader.onload = async (event) => {
     try {
       const config = JSON.parse(event.target.result);
+
+      // Validate required top-level fields before touching any app state
+      if (!config || typeof config !== 'object') throw new Error('配置文件格式无效');
+      if (config.scenes !== undefined && !Array.isArray(config.scenes)) throw new Error('配置文件 scenes 字段格式无效');
+      if (config.soundboard !== undefined && !Array.isArray(config.soundboard)) throw new Error('配置文件 soundboard 字段格式无效');
+
       weddingSchemeName.value = config.schemeName;
 
       showLoaderOverlay('RESTORING CUE FLOWS', 'Rebuilding wedding cue checklist timeline assignments...');
 
       if (config.scenes) {
-        // Check if it's a v2 config with full scene definitions
-        if (config.version === '2.0') {
+        if (config.version === '3.0' || config.scenes.some(cs => cs.tracks)) {
+          // v3.0 with tracks
           scenes = config.scenes.map(cs => ({
             id: cs.id,
             name: cs.name,
-            assignedTrackId: cs.assignedTrackId || null,
-            assignedTrackName: cs.assignedTrackName || null,
-            buffer: null,
+            playMode: cs.playMode || 'sequential',
             fadeIn: cs.fadeIn || 2.0,
             fadeOut: cs.fadeOut || 2.0,
-            startTime: cs.startTime || 0,
-            endTime: cs.endTime || null,
-            loop: cs.loop || false
+            loop: cs.loop || false,
+            tracks: (cs.tracks || []).map(t => ({
+              id: t.id,
+              buffer: null,
+              assignedTrackId: t.assignedTrackId || null,
+              assignedTrackName: t.assignedTrackName || null,
+              startTime: t.startTime || 0,
+              endTime: t.endTime || null,
+              fadeIn: t.fadeIn || 0,
+              fadeOut: t.fadeOut || 0
+            }))
           }));
           nextSceneId = Math.max(...scenes.map(s => s.id)) + 1;
+        } else if (config.version === '2.0') {
+          scenes = config.scenes.map(cs => {
+            const tracks = [];
+            if (cs.assignedTrackId) {
+              tracks.push({
+                id: `t${nextTrackId++}`,
+                buffer: null,
+                assignedTrackId: cs.assignedTrackId,
+                assignedTrackName: cs.assignedTrackName || null,
+                startTime: cs.startTime || 0,
+                endTime: cs.endTime || null,
+                fadeIn: 0,
+                fadeOut: 0
+              });
+            }
+            return {
+              id: cs.id,
+              name: cs.name,
+              playMode: 'sequential',
+              fadeIn: cs.fadeIn || 2.0,
+              fadeOut: cs.fadeOut || 2.0,
+              loop: cs.loop || false,
+              tracks
+            };
+          });
+          nextSceneId = Math.max(...scenes.map(s => s.id)) + 1;
         } else {
-          // Legacy v1 config — just update fade timings on existing scenes
           config.scenes.forEach(cScene => {
             const scene = scenes.find(s => s.id === cScene.id);
             if (scene) {
@@ -1421,17 +2187,18 @@ async function importFromJSON(jsonFile) {
       // Attempt to restore audio buffers from IndexedDB cache
       const context = getAudioContext();
       for (const scene of scenes) {
-        if (scene.assignedTrackId) {
+        for (const track of scene.tracks) {
+          if (!track.assignedTrackId) continue;
           try {
-            const fileBlob = await getCachedAudioFile(scene.assignedTrackId);
+            const fileBlob = await getCachedAudioFile(track.assignedTrackId);
             if (fileBlob) {
               const arrayBuf = await fileBlob.arrayBuffer();
-              const decodedBuffer = await context.decodeAudioData(arrayBuf);
-              scene.buffer = decodedBuffer;
-              if (fileBlob.name) scene.assignedTrackName = fileBlob.name;
+              const decodedBuffer = await context.decodeAudioData(arrayBuf.slice(0));
+              track.buffer = decodedBuffer;
+              if (fileBlob.name) track.assignedTrackName = fileBlob.name;
             }
           } catch (err) {
-            console.warn(`场景 ${scene.id} 缓存音频恢复失败:`, err);
+            console.warn(`场景 ${scene.id} track ${track.id} 缓存音频恢复失败:`, err);
           }
         }
       }
@@ -1444,7 +2211,7 @@ async function importFromJSON(jsonFile) {
             const fileBlob = await getCachedAudioFile(trackId);
             if (fileBlob) {
               const arrayBuf = await fileBlob.arrayBuffer();
-              const decodedBuffer = await context.decodeAudioData(arrayBuf);
+              const decodedBuffer = await context.decodeAudioData(arrayBuf.slice(0));
               pad.buffer = decodedBuffer;
               pad.assignedTrackId = trackId;
               if (fileBlob.name) pad.assignedTrackName = fileBlob.name;
@@ -1497,9 +2264,31 @@ async function preloadSystemDemoTracks() {
       const freq = baseFreqs[i % baseFreqs.length];
 
       const demoBuffer = await generateSynthBGMBuffer(context, freq);
-      scene.buffer = demoBuffer;
-      scene.assignedTrackId = `demo_scene_${scene.id}`;
-      scene.assignedTrackName = `🔊 系统预置测试配乐 (${freq.toFixed(1)}Hz Loop)`;
+      const trackId = `t${nextTrackId++}`;
+      const assignedTrackId = `demo_${trackId}`;
+
+      // Encode the synthesized buffer to a WAV Blob and persist it in IndexedDB
+      // so the demo tracks survive a page refresh.
+      let demoBlob = null;
+      try {
+        const { encodeWAV } = await import('./wav-encoder.js');
+        demoBlob = encodeWAV(demoBuffer);
+        const demoFile = new File([demoBlob], `demo_${freq.toFixed(1)}Hz.wav`, { type: 'audio/wav' });
+        await cacheAudioFile(assignedTrackId, demoFile);
+      } catch (encErr) {
+        console.warn('[WedMix] Demo 轨道持久化失败（WAV 编码错误），本次会话内仍可使用:', encErr);
+      }
+
+      scene.tracks = [{
+        id: trackId,
+        buffer: demoBuffer,
+        assignedTrackId,
+        assignedTrackName: `🔊 系统预置测试配乐 (${freq.toFixed(1)}Hz Loop)`,
+        startTime: 0,
+        endTime: null,
+        fadeIn: 0,
+        fadeOut: 0
+      }];
     }
 
     renderScenes();
@@ -1566,27 +2355,69 @@ function restoreConfigFromLocalStorage() {
     if (!configText) return;
 
     const config = JSON.parse(configText);
-    if (!config) return;
+    if (!config || typeof config !== 'object') return;
 
     if (config.schemeName) {
       weddingSchemeName.value = config.schemeName;
     }
 
     if (config.scenes && config.scenes.length > 0) {
-      scenes = config.scenes.map(cs => ({
-        id: cs.id,
-        name: cs.name,
-        assignedTrackId: cs.assignedTrackId || null,
-        assignedTrackName: cs.assignedTrackName || null,
-        buffer: null,
-        fadeIn: cs.fadeIn || 2.0,
-        fadeOut: cs.fadeOut || 2.0,
-        startTime: cs.startTime || 0,
-        endTime: cs.endTime || null,
-        loop: cs.loop || false
-      }));
+      scenes = config.scenes.map(cs => {
+        // v3.0 format: has tracks array
+        if (cs.tracks && Array.isArray(cs.tracks)) {
+          return {
+            id: cs.id,
+            name: cs.name,
+            playMode: cs.playMode || 'sequential',
+            fadeIn: cs.fadeIn || 2.0,
+            fadeOut: cs.fadeOut || 2.0,
+            loop: cs.loop || false,
+            tracks: cs.tracks.map(t => ({
+              id: t.id,
+              buffer: null,
+              assignedTrackId: t.assignedTrackId || null,
+              assignedTrackName: t.assignedTrackName || null,
+              startTime: t.startTime || 0,
+              endTime: t.endTime || null,
+              fadeIn: t.fadeIn || 0,
+              fadeOut: t.fadeOut || 0
+            }))
+          };
+        }
+        // Legacy format (v1/v2): scene has single buffer — migrate to tracks array
+        const tracks = [];
+        if (cs.assignedTrackId) {
+          tracks.push({
+            id: 't1',
+            buffer: null,
+            assignedTrackId: cs.assignedTrackId,
+            assignedTrackName: cs.assignedTrackName || null,
+            startTime: cs.startTime || 0,
+            endTime: cs.endTime || null,
+            fadeIn: 0,
+            fadeOut: 0
+          });
+        }
+        return {
+          id: cs.id,
+          name: cs.name,
+          playMode: 'sequential',
+          fadeIn: cs.fadeIn || 2.0,
+          fadeOut: cs.fadeOut || 2.0,
+          loop: cs.loop || false,
+          tracks
+        };
+      });
 
-      // Calculate nextSceneId to prevent conflicts when adding new scenes
+      // Ensure unique track IDs
+      scenes.forEach(s => {
+        s.tracks.forEach(t => {
+          if (!t.id || t.id === 't1') {
+            t.id = `t${nextTrackId++}`;
+          }
+        });
+      });
+
       nextSceneId = Math.max(...scenes.map(s => s.id)) + 1;
     }
 
@@ -1618,7 +2449,7 @@ async function resetWholeApplication() {
   for (const sceneId in activeBgmSources) {
     const prev = activeBgmSources[sceneId];
     if (prev) {
-      try { prev.sourceNode.stop(); prev.sourceNode.disconnect(); prev.gainNode.disconnect(); } catch(e) {}
+      try { prev.currentSource?.stop(); prev.currentSource?.disconnect(); prev.currentGain?.disconnect(); prev.sceneGainNode?.disconnect(); } catch(e) {}
     }
   }
   activeBgmSources = {};
@@ -1645,15 +2476,16 @@ async function resetWholeApplication() {
   nextSceneId = 9;
   activeSceneId = null;
 
+  nextTrackId = 1;
   scenes = [
-    { id: 1, name: "宾客进场暖场", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.0, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-    { id: 2, name: "司仪开场致辞", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.0, fadeOut: 1.5, startTime: 0, endTime: null, loop: false },
-    { id: 3, name: "新郎帅气入场", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.5, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-    { id: 4, name: "新娘圣洁入场", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.0, fadeOut: 2.5, startTime: 0, endTime: null, loop: false },
-    { id: 5, name: "誓言交换与致辞", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.5, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-    { id: 6, name: "信物交换与拥吻", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.0, fadeOut: 2.0, startTime: 0, endTime: null, loop: false },
-    { id: 7, name: "礼成退场欢庆", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 1.0, fadeOut: 2.5, startTime: 0, endTime: null, loop: false },
-    { id: 8, name: "宴会背景与敬酒", assignedTrackId: null, assignedTrackName: null, buffer: null, fadeIn: 2.5, fadeOut: 2.5, startTime: 0, endTime: null, loop: false }
+    { id: 1, name: "宾客进场暖场", playMode: "sequential", fadeIn: 2.0, fadeOut: 2.0, loop: false, tracks: [] },
+    { id: 2, name: "司仪开场致辞", playMode: "sequential", fadeIn: 1.0, fadeOut: 1.5, loop: false, tracks: [] },
+    { id: 3, name: "新郎帅气入场", playMode: "sequential", fadeIn: 1.5, fadeOut: 2.0, loop: false, tracks: [] },
+    { id: 4, name: "新娘圣洁入场", playMode: "sequential", fadeIn: 2.0, fadeOut: 2.5, loop: false, tracks: [] },
+    { id: 5, name: "誓言交换与致辞", playMode: "sequential", fadeIn: 2.5, fadeOut: 2.0, loop: false, tracks: [] },
+    { id: 6, name: "信物交换与拥吻", playMode: "sequential", fadeIn: 1.0, fadeOut: 2.0, loop: false, tracks: [] },
+    { id: 7, name: "礼成退场欢庆", playMode: "sequential", fadeIn: 1.0, fadeOut: 2.5, loop: false, tracks: [] },
+    { id: 8, name: "宴会背景与敬酒", playMode: "sequential", fadeIn: 2.5, fadeOut: 2.5, loop: false, tracks: [] }
   ];
 
   soundboard = [

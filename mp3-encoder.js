@@ -1,12 +1,12 @@
 /**
  * WaveCraft MP3 Audio Encoder Module
- * Dynamically loads lamejs and encodes standard Web Audio AudioBuffers into MP3 Blobs client-side.
+ * Loads lamejs from local assets and encodes standard Web Audio AudioBuffers into MP3 Blobs client-side.
  */
 
 let lamejsPromise = null;
 
 /**
- * Loads the lamejs library from CDN dynamically.
+ * Loads the lamejs library from local assets (offline-safe).
  */
 function loadLamejs() {
   if (lamejsPromise) return lamejsPromise;
@@ -19,7 +19,7 @@ function loadLamejs() {
     }
     
     const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.all.min.js';
+    script.src = 'assets/libs/lame.all.min.js';
     script.onload = () => {
       if (window.lamejs) {
         resolve(window.lamejs);
@@ -28,7 +28,7 @@ function loadLamejs() {
       }
     };
     script.onerror = () => {
-      reject(new Error('无法从 CDN 加载 lamejs，请检查您的网络连接是否正常。'));
+      reject(new Error('无法加载本地 lamejs，请确认 assets/libs/lame.all.min.js 文件存在。'));
     };
     document.head.appendChild(script);
   });
