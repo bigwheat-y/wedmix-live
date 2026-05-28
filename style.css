@@ -375,7 +375,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
-  max-height: 580px;
+  max-height: calc(100vh - 320px);
+  min-height: 200px;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -590,9 +591,21 @@ body {
 
 .scene-loop-toggle input[type="checkbox"]:checked + .loop-label {
   color: var(--neon-cyan);
-  border-color: rgba(var(--neon-cyan-rgb), 0.4);
-  background: rgba(var(--neon-cyan-rgb), 0.08);
-  text-shadow: 0 0 5px rgba(var(--neon-cyan-rgb), 0.3);
+  border-color: rgba(var(--neon-cyan-rgb), 0.6);
+  background: rgba(var(--neon-cyan-rgb), 0.12);
+  box-shadow: 0 0 6px rgba(var(--neon-cyan-rgb), 0.25);
+  text-shadow: 0 0 5px rgba(var(--neon-cyan-rgb), 0.4);
+  animation: loop-label-pulse 2s ease-in-out infinite;
+}
+
+@keyframes loop-label-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(var(--neon-cyan-rgb), 0.2); }
+  50%       { box-shadow: 0 0 10px rgba(var(--neon-cyan-rgb), 0.5); }
+}
+
+.scene-loop-toggle:hover .loop-label {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
 }
 
 /* Scene actions column (trigger + delete) */
@@ -765,19 +778,6 @@ body {
   text-align: center;
 }
 
-.scene-loop-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
-  cursor: pointer;
-  font-size: 0.65rem;
-}
-
-.scene-loop-checkbox {
-  accent-color: var(--neon-cyan);
-  cursor: pointer;
-}
-
 /* Track list */
 .scene-track-list {
   display: flex;
@@ -903,6 +903,7 @@ body {
   background: rgba(var(--neon-cyan-rgb), 0.03);
 }
 
+.scene-track-add-zone.active-hover,
 .scene-track-add-zone.drag-over {
   border-color: var(--neon-cyan);
   background: rgba(var(--neon-cyan-rgb), 0.06);
@@ -911,6 +912,18 @@ body {
 
 .hidden-input {
   display: none;
+}
+
+.scene-track-row.dragging {
+  opacity: 0.4;
+}
+
+.track-drop-indicator {
+  height: 2px;
+  background: var(--neon-cyan);
+  border-radius: 1px;
+  margin: 1px 0;
+  box-shadow: 0 0 6px rgba(var(--neon-cyan-rgb), 0.5);
 }
 
 /* Large CUE play buttons */
@@ -934,6 +947,20 @@ body {
 
 .btn-cue-trigger:active {
   transform: scale(0.97);
+}
+
+/* When this scene is ON AIR, the trigger button shows a live indicator */
+.scene-item-card.active-on-air .btn-cue-trigger {
+  background: rgba(var(--neon-emerald-rgb), 0.15);
+  border: 1px solid var(--neon-emerald);
+  box-shadow: 0 0 10px rgba(var(--neon-emerald-rgb), 0.3);
+  color: var(--neon-emerald);
+  animation: cue-live-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes cue-live-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(var(--neon-emerald-rgb), 0.25); }
+  50%       { box-shadow: 0 0 18px rgba(var(--neon-emerald-rgb), 0.5); }
 }
 
 /* ==========================================================================
@@ -1144,10 +1171,13 @@ body {
   border-radius: 50%;
 }
 
-.btn-circle.active {
-  background: rgba(var(--neon-cyan-rgb), 0.2) !important;
-  border-color: var(--neon-cyan) !important;
-  box-shadow: var(--glow-cyan) !important;
+/* Stop button: match the height of the large play button for visual balance */
+#btn-live-stop {
+  width: auto;
+  height: auto;
+  border-radius: 6px;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.85rem;
 }
 
 .btn-small {
@@ -1197,8 +1227,9 @@ body {
   background: var(--bg-card);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 8px;
-  height: 64px;
+  height: 80px;
   transition: all var(--transition-tactical);
+  overflow: visible; /* allow pulse-ring to expand beyond card bounds */
 }
 
 .soundboard-pad-card:hover {
@@ -1216,18 +1247,16 @@ body {
 .soundboard-pad-card.pad-playing::after {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  border-radius: 8px;
+  inset: -3px;
+  border-radius: 10px;
   border: 1.5px solid var(--neon-purple);
   pointer-events: none;
-  animation: pulse-ring 1s infinite alternate;
+  animation: pulse-ring 0.5s ease-out forwards;
 }
 
 @keyframes pulse-ring {
-  to { transform: scale(1.04); opacity: 0.5; }
+  from { opacity: 0.9; transform: scale(1); }
+  to   { opacity: 0;   transform: scale(1.08); }
 }
 
 .pad-trigger-button {
@@ -1246,11 +1275,12 @@ body {
 }
 
 .pad-icon {
-  font-size: 1.1rem;
+  font-size: 1.3rem;
+  line-height: 1;
 }
 
 .pad-title {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   color: var(--text-primary);
   font-weight: 600;
   text-align: center;
@@ -1441,6 +1471,21 @@ body {
 
 .slider-fader-container {
   width: 100%;
+  position: relative;
+}
+
+/* Center tick mark */
+.slider-fader-container::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 1px;
+  pointer-events: none;
 }
 
 /* master crossfader slider customization */
@@ -1728,6 +1773,11 @@ body {
   border-color: rgba(255, 255, 255, 0.15);
 }
 
+.radio-card:has(input[type="radio"]:checked) {
+  border-color: rgba(var(--neon-cyan-rgb), 0.4);
+  background: rgba(var(--neon-cyan-rgb), 0.04);
+}
+
 .radio-card input[type="radio"]:checked + .radio-title,
 .radio-card input[type="radio"]:checked ~ .radio-title {
   color: var(--neon-cyan);
@@ -1771,6 +1821,32 @@ body {
   font-size: 0.6rem;
   color: var(--text-muted);
   letter-spacing: 0.1em;
+}
+
+/* ==========================================================================
+   SVG Icon System
+   ========================================================================== */
+.ui-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;   /* optical baseline alignment */
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+/* Drag handle dots — slightly larger for grab target */
+.ui-icon.icon-drag {
+  width: 1.1em;
+  height: 1.1em;
+  opacity: 0.5;
+}
+
+/* Buttons that contain only an icon (no text) */
+.btn-icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ==========================================================================

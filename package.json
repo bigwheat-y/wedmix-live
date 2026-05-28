@@ -40,7 +40,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,

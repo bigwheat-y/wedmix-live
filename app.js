@@ -1,5 +1,11 @@
 import { triggerSynthEffect } from './synth-effects.js';
 import { cacheAudioFile, getCachedAudioFile, deleteCachedAudioFile, generateConfigObject, clearAllCaches } from './config-manager.js';
+import { icon } from './icons.js';
+
+// Pre-built innerHTML strings for the play/pause transport button
+const BTN_PLAY_HTML   = () => `${icon('play')} <span class="btn-text">PLAY PREVIEW</span>`;
+const BTN_PAUSE_HTML  = () => `${icon('pause')} <span class="btn-text">PAUSE PREVIEW</span>`;
+const BTN_RESUME_HTML = () => `${icon('play')} <span class="btn-text">RESUME PLAY</span>`;
 
 // ==========================================================================
 // Tactical Mixer State
@@ -99,7 +105,6 @@ let deckValCrossfadePreset = null;
 
 let btnLivePlayPause = null;
 let btnLiveStop = null;
-let btnLiveLoop = null;
 let chkConsoleLock = null;
 
 let btnEmergencyFade = null;
@@ -151,6 +156,22 @@ function initConsole() {
 
   // Try to load cached assets from IndexedDB database on startup
   loadCachedWeddingAssets();
+
+  // -----------------------------------------------------------------------
+  // Windows crash prevention: clean up AudioContext and active sources when
+  // the window is about to close. main.js sends 'app-before-close' via IPC.
+  // In Electron's contextIsolation mode the ipcRenderer is not available
+  // directly, so we listen on the window message channel that Electron
+  // bridges through the preload (or fall back to beforeunload for safety).
+  // -----------------------------------------------------------------------
+  window.addEventListener('beforeunload', handleAppClose);
+
+  // Global unhandled-rejection guard: prevents silent crashes on Windows
+  // where an unhandled Promise rejection can terminate the renderer process.
+  window.addEventListener('unhandledrejection', (event) => {
+    console.error('[WedMix] 未捕获的 Promise 异常:', event.reason);
+    event.preventDefault(); // Prevent Electron from crashing the renderer
+  });
 }
 
 function cacheDOMElements() {
@@ -174,7 +195,6 @@ function cacheDOMElements() {
 
   btnLivePlayPause = document.getElementById('btn-live-play-pause');
   btnLiveStop = document.getElementById('btn-live-stop');
-  btnLiveLoop = document.getElementById('btn-live-loop');
   chkConsoleLock = document.getElementById('chk-console-lock');
 
   btnEmergencyFade = document.getElementById('btn-emergency-fade');
@@ -272,21 +292,21 @@ function renderScenes() {
         const durationStr = track.buffer ? formatTime(track.buffer.duration) : '未加载';
         trackListHTML += `
           <div class="scene-track-row ${isPlaying ? 'playing' : ''}" data-track-id="${track.id}" data-scene-id="${scene.id}">
-            <div class="track-drag-handle" draggable="true" data-track-id="${track.id}" data-scene-id="${scene.id}" title="拖拽排序">⋮⋮</div>
-            <div class="track-info" title="${escapeHtml(track.assignedTrackName || '')}">🎵 ${escapeHtml(track.assignedTrackName || '未知')} (${durationStr})</div>
+            <div class="track-drag-handle" draggable="true" data-track-id="${track.id}" data-scene-id="${scene.id}" title="拖拽排序">${icon('drag_handle')}</div>
+            <div class="track-info" title="${escapeHtml(track.assignedTrackName || '')}">${icon('music')} ${escapeHtml(track.assignedTrackName || '未知')} (${durationStr})</div>
             <div class="track-params">
               <label>淡入:<input type="number" class="track-param-input" data-field="fadeIn" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" max="10" step="0.1" value="${track.fadeIn}">s</label>
               <label>淡出:<input type="number" class="track-param-input" data-field="fadeOut" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" max="10" step="0.1" value="${track.fadeOut}">s</label>
               <label>起始:<input type="number" class="track-param-input" data-field="startTime" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" step="0.1" value="${track.startTime || 0}">s</label>
               <label>结束:<input type="number" class="track-param-input" data-field="endTime" data-track-id="${track.id}" data-scene-id="${scene.id}" min="0" step="0.1" value="${track.endTime ?? ''}" placeholder="末尾">s</label>
             </div>
-            <button class="track-delete" data-track-id="${track.id}" data-scene-id="${scene.id}" title="删除此音频">✕</button>
+            <button class="btn-icon-only track-delete" data-track-id="${track.id}" data-scene-id="${scene.id}" title="删除此音频">${icon('trash')}</button>
           </div>`;
       });
     }
 
     card.innerHTML = `
-      <div class="scene-drag-handle" data-scene-id="${scene.id}" draggable="true" title="拖拽排序">⋮⋮</div>
+      <div class="scene-drag-handle" data-scene-id="${scene.id}" draggable="true" title="拖拽排序">${icon('drag_handle')}</div>
       <div class="scene-num-indicator">${String(index + 1).padStart(2, '0')}</div>
       <div class="scene-body">
         <div class="scene-main-info">
@@ -301,22 +321,22 @@ function renderScenes() {
             </select></label>
             <label>场景淡入:<input type="number" class="scene-fade-input" data-field="fadeIn" data-scene-id="${scene.id}" min="0" max="10" step="0.5" value="${scene.fadeIn}">s</label>
             <label>场景淡出:<input type="number" class="scene-fade-input" data-field="fadeOut" data-scene-id="${scene.id}" min="0" max="10" step="0.5" value="${scene.fadeOut}">s</label>
-            <label class="scene-loop-toggle"><input type="checkbox" class="scene-loop-checkbox" data-scene-id="${scene.id}" ${scene.loop ? 'checked' : ''}>🔁循环</label>
+            <label class="scene-loop-toggle"><input type="checkbox" class="scene-loop-checkbox" data-scene-id="${scene.id}" ${scene.loop ? 'checked' : ''}><span class="loop-label">🔁 循环</span></label>
           </div>
           <div class="scene-track-list">${trackListHTML}</div>
           <div class="scene-track-add-zone" data-scene-id="${scene.id}">
             <input type="file" class="track-file-input hidden-input" data-scene-id="${scene.id}" accept="audio/*">
-            📂 拖拽音频到此处 或 点击添加
+            ${icon('upload')} 拖拽音频到此处 或 点击添加
           </div>
         </div>
       </div>
       <div class="scene-actions-column">
-        <button class="btn-cue-trigger btn-tactical-cyan" data-scene-id="${scene.id}">⚡ 触发</button>
+        <button class="btn-cue-trigger btn-tactical-cyan" data-scene-id="${scene.id}">${icon('lightning')} 触发</button>
         <div class="scene-move-group">
-          <button class="btn-move-scene btn-move-up" data-scene-id="${scene.id}" title="上移" ${index === 0 ? 'disabled' : ''}>▲</button>
-          <button class="btn-move-scene btn-move-down" data-scene-id="${scene.id}" title="下移" ${index === scenes.length - 1 ? 'disabled' : ''}>▼</button>
+          <button class="btn-icon-only btn-move-scene btn-move-up" data-scene-id="${scene.id}" title="上移" ${index === 0 ? 'disabled' : ''}>${icon('chevron_up')}</button>
+          <button class="btn-icon-only btn-move-scene btn-move-down" data-scene-id="${scene.id}" title="下移" ${index === scenes.length - 1 ? 'disabled' : ''}>${icon('chevron_down')}</button>
         </div>
-        <button class="btn-delete-scene" data-scene-id="${scene.id}" title="删除此环节">✕</button>
+        <button class="btn-icon-only btn-delete-scene" data-scene-id="${scene.id}" title="删除此环节">${icon('close')}</button>
       </div>
     `;
 
@@ -326,7 +346,7 @@ function renderScenes() {
   // Add scene button
   const addBtn = document.createElement('button');
   addBtn.className = 'btn-add-scene';
-  addBtn.innerHTML = '➕ 新增仪式环节';
+  addBtn.innerHTML = `${icon('add')} 新增仪式环节`;
   addBtn.addEventListener('click', addScene);
   container.appendChild(addBtn);
 
@@ -387,6 +407,11 @@ function bindSceneEvents() {
     // Loop toggle
     loopCheckbox.addEventListener('change', () => {
       scene.loop = loopCheckbox.checked;
+      // Keep the transport bar loop button in sync when the active scene's
+      // checkbox is toggled directly on the scene card
+      if (activeSceneId === scene.id) {
+        // (loop button removed — scene card checkbox is the single source of truth)
+      }
       saveCurrentConfigToLocalStorage();
     });
 
@@ -654,7 +679,6 @@ function bindGlobalEventHandlers() {
   // Transport controls
   btnLivePlayPause.addEventListener('click', toggleLivePlayback);
   btnLiveStop.addEventListener('click', stopLivePlayback);
-  btnLiveLoop.addEventListener('click', toggleLiveLoop);
   chkConsoleLock.addEventListener('change', handleConsoleLockToggle);
 
   // Master console controls
@@ -1020,6 +1044,7 @@ function playTrackInScene(sceneId, orderIndex) {
   playbackOffset = effectiveStart;
   if (isFirstTrack) {
     if (activeVisualizerInterval) cancelAnimationFrame(activeVisualizerInterval);
+    activeVisualizerInterval = null;
     activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
   }
 }
@@ -1079,7 +1104,7 @@ function advanceToNextTrack(sceneId, nextOrderIndex) {
           activeSceneId = null;
           masterStatusTag.textContent = 'STANDBY';
           masterStatusTag.className = 'status-indicator-tag status-ready';
-          btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+          btnLivePlayPause.innerHTML = BTN_PLAY_HTML();
         }
         return;
       }
@@ -1108,7 +1133,7 @@ function advanceToNextTrack(sceneId, nextOrderIndex) {
         activeSceneId = null;
         masterStatusTag.textContent = 'STANDBY';
         masterStatusTag.className = 'status-indicator-tag status-ready';
-        btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+        btnLivePlayPause.innerHTML = BTN_PLAY_HTML();
       }
       return;
     }
@@ -1133,7 +1158,7 @@ function advanceToNextTrack(sceneId, nextOrderIndex) {
         activeSceneId = null;
         masterStatusTag.textContent = 'STANDBY';
         masterStatusTag.className = 'status-indicator-tag status-ready';
-        btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+        btnLivePlayPause.innerHTML = BTN_PLAY_HTML();
       }
       return;
     }
@@ -1218,7 +1243,7 @@ function updateTrackDeckInfo(sceneId) {
   const sceneCard = document.getElementById(`scene-card-${sceneId}`);
   if (sceneCard) {
     sceneCard.querySelectorAll('.scene-track-row').forEach((row, i) => {
-      row.classList.toggle('track-active', i === trackIdx);
+      row.classList.toggle('playing', i === trackIdx);
     });
   }
 
@@ -1282,9 +1307,7 @@ function triggerSceneCue(sceneId) {
   // Start new scene playlist from first track
   playTrackInScene(sceneId, 0);
 
-  // Update loop button state
-  btnLiveLoop.classList.toggle('active', targetScene.loop);
-  btnLivePlayPause.innerHTML = `<span class="btn-icon">⏸️</span> <span class="btn-text">PAUSE PREVIEW</span>`;
+  btnLivePlayPause.innerHTML = BTN_PAUSE_HTML();
 }
 
 // ==========================================================================
@@ -1303,8 +1326,9 @@ function toggleLivePlayback() {
   if (state.isPlaying) {
     // Pause
     state.isPlaying = false;
-    btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">RESUME PLAY</span>`;
+    btnLivePlayPause.innerHTML = BTN_RESUME_HTML();
     cancelAnimationFrame(activeVisualizerInterval);
+    activeVisualizerInterval = null;
     if (state.crossfadeTimer) { clearTimeout(state.crossfadeTimer); state.crossfadeTimer = null; }
 
     const elapsed = context.currentTime - playbackStartTime;
@@ -1325,7 +1349,7 @@ function toggleLivePlayback() {
     state.isPlaying = true;
     state.transitionScheduled = false;
     state.needsAdvance = false;
-    btnLivePlayPause.innerHTML = `<span class="btn-icon">⏸️</span> <span class="btn-text">PAUSE PREVIEW</span>`;
+    btnLivePlayPause.innerHTML = BTN_PAUSE_HTML();
 
     const trackIdx = state.playOrder[state.currentOrderIndex];
     const track = scene ? scene.tracks[trackIdx] : null;
@@ -1376,6 +1400,8 @@ function toggleLivePlayback() {
       scheduleNextTrackCrossfade(activeSceneId, preCrossfadeTime);
     }
 
+    cancelAnimationFrame(activeVisualizerInterval);
+    activeVisualizerInterval = null;
     activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
   }
 }
@@ -1401,7 +1427,7 @@ function stopLivePlayback() {
   masterStatusTag.textContent = 'STANDBY';
   masterStatusTag.className = 'status-indicator-tag status-ready';
 
-  btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+  btnLivePlayPause.innerHTML = BTN_PLAY_HTML();
 
   cancelAnimationFrame(activeVisualizerInterval);
   updatePlayheadMarkerUI(0);
@@ -1409,19 +1435,34 @@ function stopLivePlayback() {
   playbackOffset = 0;
 }
 
-function toggleLiveLoop() {
-  if (!activeSceneId) return;
-  const scene = scenes.find(s => s.id === activeSceneId);
-  if (!scene) return;
+// ==========================================================================
+// App Close Cleanup (Windows crash prevention)
+// ==========================================================================
+function handleAppClose() {
+  // Stop all active BGM sources and disconnect the audio graph so Windows
+  // releases the audio device immediately. Without this, the WASAPI session
+  // can remain open and block the next launch.
+  try {
+    cancelAnimationFrame(activeVisualizerInterval);
+    if (ledClockIntervalId) clearInterval(ledClockIntervalId);
 
-  scene.loop = !scene.loop;
-  btnLiveLoop.classList.toggle('active', scene.loop);
+    Object.keys(activeBgmSources).forEach(sceneId => {
+      const s = activeBgmSources[sceneId];
+      if (s.crossfadeTimer) clearTimeout(s.crossfadeTimer);
+      try { s.currentSource?.stop(); s.currentSource?.disconnect(); } catch(e) {}
+      try { s.currentGain?.disconnect(); } catch(e) {}
+      try { s.sceneGainNode?.disconnect(); } catch(e) {}
+    });
+    activeBgmSources = {};
 
-  // Update checkbox in scene card
-  const card = document.getElementById(`scene-card-${scene.id}`);
-  if (card) {
-    const chk = card.querySelector('.scene-loop-checkbox');
-    if (chk) chk.checked = scene.loop;
+    activeSoundboardSources.forEach(src => { try { src.stop(); } catch(e) {} });
+    activeSoundboardSources = [];
+
+    if (audioCtx && audioCtx.state !== 'closed') {
+      audioCtx.close().catch(() => {});
+    }
+  } catch(e) {
+    // Best-effort cleanup — never throw during unload
   }
 }
 
@@ -1596,7 +1637,7 @@ function openPadConfigModal(padId) {
     configSynthEffectSelect.value = pad.synthEffectId || 'bell';
   } else {
     radioTypeCustom.checked = true;
-    padCustomFileName.textContent = pad.assignedTrackName ? `📂 ${pad.assignedTrackName}` : '📂 点击或拖拽上传音频效果音';
+    padCustomFileName.textContent = pad.assignedTrackName ? `${pad.assignedTrackName}` : '点击或拖拽上传音频效果音';
   }
 
   togglePadConfigTypeUI();
@@ -1622,7 +1663,7 @@ function assignCustomFileToPadConfig(file) {
       padCustomFileInput.decodedBuffer = decodedBuffer;
       padCustomFileInput.fileName = file.name;
       padCustomFileInput.rawFile = file;
-      padCustomFileName.textContent = `🎵 ${file.name} (解码就绪)`;
+      padCustomFileName.textContent = `${file.name} (解码就绪)`;
     } catch(err) {
       padCustomFileName.textContent = '❌ 文件解码失败，请换个格式重试';
       padCustomFileInput.decodedBuffer = null;
@@ -1786,7 +1827,7 @@ function triggerEmergencyFadeOut() {
 
       masterStatusTag.textContent = 'STANDBY';
       masterStatusTag.className = 'status-indicator-tag status-ready';
-      btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+      btnLivePlayPause.innerHTML = BTN_PLAY_HTML();
       deckDisplayTrackTitle.textContent = 'NO ACTIVE TRACK';
       isEmergencyActive = false;
     }, fadeOutSecs * 1000 + 200);
@@ -1900,13 +1941,16 @@ async function saveWeddingConfigProfile() {
     zip.file('config.json', JSON.stringify(configObj, null, 2));
 
     // 2. Collect scene audio files (per-track)
+    // Use streamFiles:true so JSZip doesn't hold all Blobs in memory at once,
+    // reducing peak RAM usage on Windows (especially important for multi-track
+    // weddings where total audio can exceed 1GB uncompressed).
     for (const scene of scenes) {
       for (const track of scene.tracks) {
         if (track.assignedTrackId && track.assignedTrackName) {
           const blob = await getCachedAudioFile(track.assignedTrackId);
           if (blob) {
             const zipPath = `audio/scene_${scene.id}_${track.id}_${track.assignedTrackName}`;
-            zip.file(zipPath, blob);
+            zip.file(zipPath, blob, { binary: true });
           }
         }
       }
@@ -1917,13 +1961,19 @@ async function saveWeddingConfigProfile() {
       if (pad.type === 'custom' && pad.assignedTrackId && pad.assignedTrackName) {
         const blob = await getCachedAudioFile(pad.assignedTrackId);
         if (blob) {
-          zip.file(`audio/pad_${pad.id}_${pad.assignedTrackName}`, blob);
+          zip.file(`audio/pad_${pad.id}_${pad.assignedTrackName}`, blob, { binary: true });
         }
       }
     }
 
-    // 4. Generate ZIP and download
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    // 4. Generate ZIP with STORE compression for audio (already compressed),
+    // which avoids a second CPU-intensive compression pass and reduces peak
+    // memory usage significantly on Windows.
+    const zipBlob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'STORE',   // audio files are already compressed (MP3/AAC)
+      streamFiles: true       // process files one at a time to reduce RAM peak
+    });
     const cleanName = scheme.replace(/[^\w\u4e00-\u9fa5]/gi, '_');
     const filename = `WedMix_${cleanName}_${new Date().toISOString().slice(0, 10)}.zip`;
 
@@ -2514,7 +2564,7 @@ async function resetWholeApplication() {
   // 6. Reset UI states
   masterStatusTag.textContent = 'STANDBY';
   masterStatusTag.className = 'status-indicator-tag status-ready';
-  btnLivePlayPause.innerHTML = `<span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>`;
+  btnLivePlayPause.innerHTML = BTN_PLAY_HTML();
   cancelAnimationFrame(activeVisualizerInterval);
   updatePlayheadMarkerUI(0);
   deckValCurrentTime.textContent = '0:00.0';

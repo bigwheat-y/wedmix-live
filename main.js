@@ -4,14 +4,31 @@ const { pathToFileURL } = require('url');
 // Keep a global reference to prevent garbage collection
 let mainWindow;
 
-// Register a custom protocol 'localfile://' that safely serves files from
-// the user's filesystem without disabling webSecurity globally.
-// This replaces the previous webSecurity: false workaround.
+// Register a custom protocol 'localfile://' BEFORE app is ready (required by
+// Electron's protocol.handle API). This safely serves local audio files without
+// disabling webSecurity globally.
+//
+// Windows path note: pathToFileURL correctly converts both forward-slash and
+// backslash paths (e.g. C:\Users\...) to file:/// URLs, so no manual
+// normalization is needed.
 function registerLocalFileProtocol() {
   protocol.handle('localfile', (request) => {
-    // Strip the protocol prefix to get the absolute file path
-    const filePath = decodeURIComponent(request.url.slice('localfile://'.length));
-    return net.fetch(pathToFileURL(filePath).toString());
+    // Decode percent-encoded characters, then strip the protocol prefix
+    const rawPath = decodeURIComponent(request.url.slice('localfile://'.length));
+
+    // Reject path traversal attempts (e.g. localfile://../../../etc/passwd)
+    if (rawPath.includes('..')) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    let fileUrl;
+    try {
+      fileUrl = pathToFileURL(rawPath).toString();
+    } catch (e) {
+      return new Response('Bad Request', { status: 400 });
+    }
+
+    return net.fetch(fileUrl);
   });
 }
 
@@ -22,24 +39,18 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'WedMix Live - 婚礼现场专业调音控制台',
-    // Use a default icon; replace with your own icon files if desired
     // icon: path.join(__dirname, 'assets/icon.png'),
     webPreferences: {
-      // Web Audio API and IndexedDB work fully with webSecurity enabled.
-      // Local audio files are served via the custom 'localfile://' protocol
-      // registered below, so webSecurity no longer needs to be disabled.
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
     },
     backgroundColor: '#07070b',
-    show: false, // Don't show until ready to avoid white flash
+    show: false,
   });
 
-  // Load the app
   mainWindow.loadFile('index.html');
 
-  // Show window once content is ready (avoids white flash on startup)
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
@@ -48,6 +59,15 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // On Windows, closing the window does NOT automatically release the
+  // AudioContext or IndexedDB connections held by the renderer. Send a
+  // message so the renderer can clean up before the process exits.
+  mainWindow.on('close', (e) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app-before-close');
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -62,6 +82,7 @@ app.on('activate', () => {
   }
 });
 
+// protocol.handle must be called after app is ready
 app.whenReady().then(() => {
   registerLocalFileProtocol();
   createWindow();

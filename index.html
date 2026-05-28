@@ -32,14 +32,26 @@
       <!-- Wedding Couple Profile Selector -->
       <div class="profile-zone">
         <div class="input-glow-group">
-          <span class="input-icon">💍</span>
-          <input type="text" id="wedding-scheme-name" placeholder="请输入本场新人名称 (如: 张先生&李女士)" value="张先生 & 李女士婚礼配乐方案">
-        </div>
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="opacity:0.5"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/></svg>
+            <input type="text" id="wedding-scheme-name" placeholder="请输入本场新人名称 (如: 张先生&李女士)" value="张先生 & 李女士婚礼配乐方案">
+          </div>
         <div class="profile-actions">
-          <button class="btn-tactical btn-small btn-tactical-emerald" id="btn-preload-demo">⚡ 载入演示音乐</button>
-          <button class="btn-tactical btn-small btn-tactical-cyan" id="btn-save-profile">💾 保存配置</button>
-          <button class="btn-tactical btn-small btn-tactical-cyan" id="btn-load-profile-trigger">📂 导入配置</button>
-          <button class="btn-tactical btn-small btn-tactical-red" id="btn-reset-all">🔄 一键重置</button>
+          <button class="btn-tactical btn-small btn-tactical-emerald" id="btn-preload-demo">
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641l2.5-8.5z"/></svg>
+            载入演示音乐
+          </button>
+          <button class="btn-tactical btn-small btn-tactical-cyan" id="btn-save-profile">
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4.414A1 1 0 0 0 14.707 4L12 1.293A1 1 0 0 0 11.586 1H2zm5.5 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5zM4 2h5v2.5a.5.5 0 0 0 .5.5h3V4h-2.5V2H10v2H4V2z"/></svg>
+            保存配置
+          </button>
+          <button class="btn-tactical btn-small btn-tactical-cyan" id="btn-load-profile-trigger">
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.19a2 2 0 0 1 1.345.51l.33.33h5.335A1.5 1.5 0 0 1 14 3.5v.5H.54zM0 5v8.5A1.5 1.5 0 0 0 1.5 15h13a1.5 1.5 0 0 0 1.5-1.5V5H0z"/></svg>
+            导入配置
+          </button>
+          <button class="btn-tactical btn-small btn-tactical-red" id="btn-reset-all">
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+            一键重置
+          </button>
           <input type="file" id="profile-file-input" accept=".json,.zip" class="hidden-input">
         </div>
       </div>
@@ -107,17 +119,23 @@
           <!-- Transport bar -->
           <div class="transport-toolbar">
             <div class="transport-buttons">
-              <button class="btn-tactical btn-circle btn-tactical-red" id="btn-live-stop" title="紧急中断">⏹️</button>
-              <button class="btn-tactical btn-tactical-emerald btn-large-live" id="btn-live-play-pause">
-                <span class="btn-icon">▶️</span> <span class="btn-text">PLAY PREVIEW</span>
+              <button class="btn-tactical btn-tactical-red" id="btn-live-stop" title="紧急中断">
+                <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.5 3.5h9a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z"/></svg>
+                STOP
               </button>
-              <button class="btn-tactical btn-circle btn-tactical-cyan" id="btn-live-loop" title="循环当前背景">🔁</button>
+              <button class="btn-tactical btn-tactical-emerald btn-large-live" id="btn-live-play-pause">
+                <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 2.5a.5.5 0 0 1 .765-.424l10 5.5a.5.5 0 0 1 0 .848l-10 5.5A.5.5 0 0 1 3 13.5v-11z"/></svg>
+                <span class="btn-text">PLAY PREVIEW</span>
+              </button>
             </div>
             
             <!-- Global console locking check -->
             <div class="lock-panel-toggle">
               <input type="checkbox" id="chk-console-lock">
-              <label for="chk-console-lock" class="glow-checkbox-label">🔒 锁定调音台面板 (防误触)</label>
+              <label for="chk-console-lock" class="glow-checkbox-label">
+                <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/></svg>
+                锁定调音台面板 (防误触)
+              </label>
             </div>
           </div>
         </section>
@@ -240,7 +258,8 @@
       <div class="emergency-action-zone">
         <button class="btn-emergency-shutdown" id="btn-emergency-fade">
           <span class="glow-indicator-red"></span>
-          🚨 EMERGENCY FADE OUT
+          <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="font-size:1.1em"><path d="M7.938 2.016A.13.13 0 0 1 8.002 2a.13.13 0 0 1 .063.016.146.146 0 0 1 .054.057l6.857 11.667c.036.06.035.124.002.183a.163.163 0 0 1-.054.06.116.116 0 0 1-.066.017H1.146a.115.115 0 0 1-.066-.017.163.163 0 0 1-.054-.06.176.176 0 0 1 .002-.183L7.884 2.073a.147.147 0 0 1 .054-.057zm1.044-.45a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566z"/><path d="M7.002 12a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 5.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995z"/></svg>
+          EMERGENCY FADE OUT
           <span class="btn-subtext">紧急一键淡出 (1.5秒归零)</span>
         </button>
       </div>
@@ -249,7 +268,8 @@
       <div class="ducking-control-zone">
         <button class="btn-ducking-toggle" id="btn-ducking-switch">
           <span class="led-light" id="ducking-led"></span>
-          🎙️ 司仪人声避让 (BGM Ducking)
+          <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.5 6.5A.5.5 0 0 1 4 7v1a4 4 0 0 0 8 0V7a.5.5 0 0 1 1 0v1a5 5 0 0 1-4.5 4.975V15h3a.5.5 0 0 1 0 1h-7a.5.5 0 0 1 0-1h3v-2.025A5 5 0 0 1 3 8V7a.5.5 0 0 1 .5-.5z"/><path d="M10 8a2 2 0 1 1-4 0V3a2 2 0 1 1 4 0v5z"/></svg>
+          司仪人声避让 (BGM Ducking)
           <span class="btn-subtext">背景音乐音量自动压限 75%</span>
         </button>
       </div>
@@ -347,8 +367,14 @@
         </div>
 
         <div class="modal-footer">
-          <button class="btn-tactical btn-tactical-red" id="btn-config-reset">🔄 恢复出厂设置</button>
-          <button class="btn-tactical btn-tactical-cyan" id="btn-config-save">💾 保存配置</button>
+          <button class="btn-tactical btn-tactical-red" id="btn-config-reset">
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+            恢复出厂设置
+          </button>
+          <button class="btn-tactical btn-tactical-cyan" id="btn-config-save">
+            <svg class="ui-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4.414A1 1 0 0 0 14.707 4L12 1.293A1 1 0 0 0 11.586 1H2zm5.5 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5zM4 2h5v2.5a.5.5 0 0 0 .5.5h3V4h-2.5V2H10v2H4V2z"/></svg>
+            保存配置
+          </button>
         </div>
       </div>
     </div>
