@@ -157,6 +157,9 @@ function initConsole() {
   // Try to load cached assets from IndexedDB database on startup
   loadCachedWeddingAssets();
 
+  // Waveform click & drag to seek
+  initWaveformSeek();
+
   // -----------------------------------------------------------------------
   // Windows crash prevention: clean up AudioContext and active sources when
   // the window is about to close. main.js sends 'app-before-close' via IPC.
@@ -1549,10 +1552,158 @@ function drawDeckWaveform(audioBuffer) {
       if (trackEnd < audioBuffer.duration) { ctx.beginPath(); ctx.moveTo(endPx, 0); ctx.lineTo(endPx, height); ctx.stroke(); }
     }
   }
+
+  canvas.parentElement.classList.toggle('has-active-track', !!audioBuffer);
+}
+
+// ==========================================================================
+// Waveform Seek (Click & Drag to change playback position)
+// ==========================================================================
+function initWaveformSeek() {
+  const workspace = deckWaveformCanvas.parentElement;
+  let isDragging = false;
+  let seekTargetSceneId = null;
+
+  const previewEl = document.createElement('div');
+  previewEl.className = 'seek-time-preview hidden';
+  workspace.appendChild(previewEl);
+
+  function xToTime(clientX) {
+    if (!activeDrawingBuffer) return 0;
+    const rect = deckWaveformCanvas.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * activeDrawingBuffer.duration;
+  }
+
+  function clampToEffectiveRange(time) {
+    if (!activeSceneId) return time;
+    const state = activeBgmSources[activeSceneId];
+    const scene = scenes.find(s => s.id === activeSceneId);
+    if (!state || !scene) return time;
+    const track = scene.tracks[state.playOrder[state.currentOrderIndex]];
+    if (!track || !track.buffer) return time;
+    return Math.max(track.startTime || 0, Math.min(track.endTime || track.buffer.duration, time));
+  }
+
+  function updateSeekUI(time) {
+    updatePlayheadMarkerUI(time);
+    deckValCurrentTime.textContent = formatTime(time);
+    previewEl.textContent = formatTime(time);
+    previewEl.style.left = `${(time / activeDrawingBuffer.duration) * 100}%`;
+  }
+
+  function performSeek(targetTime) {
+    if (!activeSceneId || !activeDrawingBuffer) return;
+    if (activeSceneId !== seekTargetSceneId) return;
+
+    const state = activeBgmSources[activeSceneId];
+    if (!state) return;
+
+    const context = getAudioContext();
+    const scene = scenes.find(s => s.id === activeSceneId);
+    const track = scene?.tracks[state.playOrder[state.currentOrderIndex]];
+    if (!track || !track.buffer) return;
+
+    const effectiveStart = track.startTime || 0;
+    const effectiveEnd = track.endTime || track.buffer.duration;
+
+    if (targetTime < effectiveStart) targetTime = effectiveStart;
+    if (targetTime >= effectiveEnd) targetTime = Math.max(effectiveStart, effectiveEnd - 0.01);
+
+    const remainingDuration = effectiveEnd - targetTime;
+
+    if (state.isPlaying) {
+      // Seeked to (near) end — delegate to track-advance logic
+      if (remainingDuration <= 0.01) {
+        updateSeekUI(targetTime);
+        advanceToNextTrack(activeSceneId);
+        return;
+      }
+
+      if (state.crossfadeTimer) { clearTimeout(state.crossfadeTimer); state.crossfadeTimer = null; }
+      state.needsAdvance = false;
+      state.transitionScheduled = false;
+
+      try { state.currentSource?.stop(); state.currentSource?.disconnect(); } catch (e) {}
+
+      // Clear stale gain automation (BUG-1 fix)
+      state.sceneGainNode.gain.cancelScheduledValues(context.currentTime);
+      state.sceneGainNode.gain.setValueAtTime(bgmVolume, context.currentTime);
+      state.currentGain.gain.cancelScheduledValues(context.currentTime);
+      state.currentGain.gain.setValueAtTime(1, context.currentTime);
+
+      const newSource = context.createBufferSource();
+      newSource.buffer = track.buffer;
+      newSource.loop = false;
+      newSource.connect(state.currentGain);
+      newSource.start(0, targetTime, remainingDuration);
+
+      state.currentSource = newSource;
+      playbackStartTime = context.currentTime;
+      playbackOffset = targetTime;
+      state.startTimestamp = context.currentTime;
+
+      newSource.onended = () => {
+        if (state.currentSource !== newSource) return;
+        if (!state.isPlaying) return;
+        if (state.transitionScheduled) return;
+        state.needsAdvance = true;
+        advanceToNextTrack(activeSceneId);
+      };
+
+      const crossfadeDuration = track.fadeOut || 0;
+      const preCrossfadeTime = remainingDuration - crossfadeDuration;
+      if (preCrossfadeTime > 0 && scene.tracks.length > 1) {
+        scheduleNextTrackCrossfade(activeSceneId, preCrossfadeTime);
+      }
+    } else {
+      playbackOffset = targetTime;
+    }
+
+    updateSeekUI(targetTime);
+  }
+
+  workspace.addEventListener('mousedown', (e) => {
+    if (isConsoleLocked) return;
+    if (!activeDrawingBuffer) return;
+    if (!activeSceneId || !activeBgmSources[activeSceneId]) return;
+
+    isDragging = true;
+    seekTargetSceneId = activeSceneId;
+    workspace.classList.add('seeking');
+    previewEl.classList.remove('hidden');
+
+    cancelAnimationFrame(activeVisualizerInterval);
+    activeVisualizerInterval = null;
+
+    const time = clampToEffectiveRange(xToTime(e.clientX));
+    updateSeekUI(time);
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    updateSeekUI(clampToEffectiveRange(xToTime(e.clientX)));
+  });
+
+  document.addEventListener('mouseup', (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    workspace.classList.remove('seeking');
+    previewEl.classList.add('hidden');
+
+    performSeek(clampToEffectiveRange(xToTime(e.clientX)));
+
+    if (activeSceneId && activeBgmSources[activeSceneId]?.isPlaying) {
+      activeVisualizerInterval = requestAnimationFrame(animateDeckPlayhead);
+    }
+  });
 }
 
 function animateDeckPlayhead() {
   if (!activeSceneId || !activeDrawingBuffer) return;
+  const workspace = deckWaveformCanvas?.parentElement;
+  if (workspace?.classList.contains('seeking')) return;
 
   const state = activeBgmSources[activeSceneId];
   if (state && state.isPlaying) {
